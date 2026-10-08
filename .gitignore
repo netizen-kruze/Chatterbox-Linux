@@ -1,0 +1,9 @@
+bin/
+obj/
+publish/
+releases/
+bin-alt*/
+*.user
+.vs/
+TestResults/
+*.suo

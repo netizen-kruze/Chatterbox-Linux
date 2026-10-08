@@ -1,0 +1,18 @@
+# Files that must reach a Linux checkout with LF endings no matter where
+# the clone was made.
+*.sh      text eol=lf
+*.py      text eol=lf
+*.desktop text eol=lf
+*.svg     text eol=lf
+*.cs      text
+*.md      text
+*.json    text
+*.html    text
+*.js      text
+*.css     text
+*.csproj  text
+*.sln     text
+*.png     binary
+*.ico     binary
+*.wav     binary
+*.woff2   binary

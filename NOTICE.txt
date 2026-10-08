@@ -1,0 +1,40 @@
+Chatterbox — live local speech-to-text captions for the VRChat chatbox
+====================================================================
+
+Third-party software
+--------------------
+- Whisper.net and whisper.cpp — MIT (Sandro Hanea; Georgi Gerganov et al.)
+- sherpa-onnx — Apache-2.0 (k2-fsa)
+- ONNX Runtime — MIT (Microsoft)
+- Photino.NET — Apache-2.0 (TryPhotino)
+- Newtonsoft.Json — MIT (James Newton-King)
+- .NET runtime — MIT (.NET Foundation and Contributors), bundled in the
+  self-contained binary
+- Atkinson Hyperlegible font — SIL OFL 1.1 (Braille Institute of America)
+- IBM Plex Sans / IBM Plex Mono fonts — SIL OFL 1.1 (IBM)
+
+System components used at runtime, provided by the distribution and not
+bundled: GTK 3, libnotify and WebKitGTK (the window), PipeWire's pw-record
+or PulseAudio's parec (microphone capture), coredumpctl/journalctl (crash
+records), and the NVIDIA driver's libcuda.so.1 for optional GPU acceleration.
+
+Models (downloaded at runtime, never bundled)
+---------------------------------------------
+- OpenAI Whisper models — MIT (ggml conversions by ggerganov/whisper.cpp)
+- NVIDIA Parakeet TDT 0.6B v2 — CC-BY-4.0 (NVIDIA; int8 ONNX export by
+  k2-fsa/sherpa-onnx, csukuangfj — a modification of the original model).
+  License: https://creativecommons.org/licenses/by/4.0/
+- Silero VAD — MIT (snakers4/silero-vad; ggml conversion by ggml-org)
+- Whisper CUDA acceleration pack — MIT (whisper.cpp CUDA build, packaged
+  by Whisper.net)
+- NVIDIA CUDA 13 runtime and cuBLAS (libcudart, libcublas, libcublasLt) —
+  NVIDIA Software License Agreement (proprietary; these runtime libraries
+  are redistributable under it). Fetched on request from NVIDIA's own
+  nvidia-cuda-runtime and nvidia-cublas packages on PyPI as the second
+  part of GPU acceleration; the license text is saved beside them as
+  NVIDIA-CUDA-LICENSE.txt.
+
+A machine-readable manifest of installed models and their licenses is
+written next to the models themselves (models_manifest.json).
+
+Full license texts for all of the above: THIRD_PARTY_LICENSES.md.

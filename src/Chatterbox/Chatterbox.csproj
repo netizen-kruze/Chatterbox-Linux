@@ -1,0 +1,103 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Linux build: plain net9.0, published for linux-x64 (build.sh, or
+         build.ps1 cross-publishing from Windows). The window is WebKitGTK
+         through Photino, the microphone is a PipeWire child process, and
+         no Windows-only package remains. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Chatterbox</AssemblyName>
+    <RootNamespace>Chatterbox</RootNamespace>
+    <Version>1.5.4</Version>
+    <Product>Chatterbox</Product>
+    <AssemblyTitle>Chatterbox — live captions for VRChat (Linux)</AssemblyTitle>
+    <Company>Chatterbox</Company>
+    <Copyright>© 2026 Chatterbox</Copyright>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- No ICU dependency: everything here parses and formats with the
+         invariant culture, and a minimal install without libicu must
+         still start. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The embedded PDB ships in the release binary; without this mapping
+         its document table (and symbolicated stack traces in error.log)
+         would carry the build machine's full source paths. Release-only so
+         local Debug builds keep real paths for breakpoint binding. -->
+    <PathMap Condition="'$(Configuration)' == 'Release'">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../'))=./</PathMap>
+    <!-- Single source of truth for the native package versions: the
+         package references, the embedded-natives path and the guard target
+         all read these, so a version bump can never drift them apart. -->
+    <WhisperNetVersion>1.9.1</WhisperNetVersion>
+    <SherpaOnnxVersion>1.13.5</SherpaOnnxVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Photino.NET" Version="4.0.16" />
+    <PackageReference Include="Whisper.net" Version="$(WhisperNetVersion)" />
+    <!-- ExcludeAssets: the runtime package would drop its natives loose in
+         the output, and a single-file publish would then bundle them where
+         Whisper.net's loader never probes (the host's own extraction dir).
+         Instead they ship as embedded resources (below) and Program.cs
+         places them in runtimes/linux-x64 at boot — a probed path, the
+         same layout the CUDA pack installs into. -->
+    <PackageReference Include="Whisper.net.Runtime" Version="$(WhisperNetVersion)" ExcludeAssets="all" />
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="$(SherpaOnnxVersion)" />
+    <!-- The 31 MB linux-x64 natives ship via the in-app engine pack instead
+         (SttEnginePack); excluding them here keeps the package small. -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx.runtime.linux-x64" Version="$(SherpaOnnxVersion)" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The UI ships inside the assembly, so a single-file publish leaves
+         nothing beside the binary. -->
+    <EmbeddedResource Include="wwwroot/**">
+      <LogicalName>ui/wwwroot/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <!-- Window icon: GTK wants a PNG (the ICO loader is an optional
+         gdk-pixbuf module on Fedora). -->
+    <EmbeddedResource Include="app.png">
+      <LogicalName>ui/app.png</LogicalName>
+    </EmbeddedResource>
+    <!-- The scalable icon the self-install (LinuxInstaller) writes into
+         the hicolor theme. -->
+    <EmbeddedResource Include="Install/chatterbox.svg">
+      <LogicalName>install/chatterbox.svg</LogicalName>
+    </EmbeddedResource>
+    <!-- The speed check's 14 s speech clip (a synthetic voice reading known
+         text), transcribed by every installed engine to time this machine. -->
+    <EmbeddedResource Include="Bench/fixture.wav">
+      <LogicalName>bench/fixture.wav</LogicalName>
+    </EmbeddedResource>
+    <!-- The license documents render in-app (Settings > About) instead of
+         shipping as loose files. Not under ui/ on purpose: they are read
+         straight from the assembly, never extracted. -->
+    <EmbeddedResource Include="../../README.md">
+      <LogicalName>docs/README.md</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../../LICENSE">
+      <LogicalName>docs/LICENSE.txt</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="../../NOTICE.txt">
+      <LogicalName>docs/NOTICE.txt</LogicalName>
+    </EmbeddedResource>
+    <!-- whisper.cpp CPU natives (~2.5 MB), extracted at boot by
+         Program.ExtractWhisperNatives. The path follows $(WhisperNetVersion),
+         so it can't drift from the package references. -->
+    <EmbeddedResource Include="$(NuGetPackageRoot)whisper.net.runtime/$(WhisperNetVersion)/build/linux-x64/*.so">
+      <LogicalName>natives/linux-x64/%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <Target Name="EnsureWhisperNatives" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(NuGetPackageRoot)whisper.net.runtime/$(WhisperNetVersion)/build/linux-x64/libwhisper.so')"
+           Text="Whisper.net.Runtime $(WhisperNetVersion) linux-x64 natives not found in the NuGet cache — run a package restore first." />
+  </Target>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Chatterbox.Tests" />
+  </ItemGroup>
+
+</Project>
