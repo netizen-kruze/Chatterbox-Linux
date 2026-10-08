@@ -187,6 +187,11 @@ button:focus-visible,select:focus-visible,input:focus-visible,.toggle:focus-visi
   white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow-y:auto;
   user-select:text} /* body disables selection; these docs exist only here, so they must be copyable */
 .docview.open{display:block}
+.updnotes{font:400 11.5px/1.55 var(--mono);color:var(--tx2);background:var(--bg-raised);border:1px solid var(--brd-soft);
+  border-radius:9px;padding:10px 12px;margin:9px 0 2px;white-space:pre-wrap;overflow-wrap:anywhere;
+  max-height:160px;overflow-y:auto;max-width:60ch;user-select:text}
+.updnotes[hidden],.updprog[hidden]{display:none}
+.updprog{margin-top:9px;max-width:52ch}
 .tag-exp{font:600 9px 'IBM Plex Sans';letter-spacing:.07em;text-transform:uppercase;color:var(--amber);border:1px solid var(--amber-deep);border-radius:4px;padding:1.5px 6px;margin-left:7px;vertical-align:1px}
 .seg{display:flex;background:var(--bg-raised);border:1px solid var(--brd);border-radius:8px;overflow:hidden;flex-shrink:0}
 .seg button{font:500 12.5px 'IBM Plex Sans';color:var(--tx2);border:0;background:none;padding:7.5px 15px;cursor:pointer}

@@ -205,6 +205,28 @@ and `~/.config/Chatterbox` away (restore after this section).
       shows normally (no first-run cards), and Start / the boot auto-start
       work. Offline, Start fails with the "Captions need the voice detector
       … couldn't be downloaded" toast — never a "model not found" error.
+- [ ] Settings → Updates (1.6.0+): a build with `<UpdateRepository>` set
+      says "You have the latest version (x.y.z)" after Check for updates
+      (one request to api.github.com); a build without it shows the greyed
+      "no update source configured" line and never goes online. "Check
+      when Chatterbox starts" persists (`CheckUpdatesAtStartup` in
+      stt_settings.json) and is off by default.
+- [ ] Update flow, offline-safe: serve a fake release with
+      `python3 -m http.server` — a `latest.json` in GitHub's release shape
+      (tag `vX.Y.Z` above the build, an asset named
+      `Chatterbox-X.Y.Z-linux-x64`, notes containing
+      `SHA-256: <hash of that file>`) — and launch a copy of the app with
+      `--update-url http://127.0.0.1:8000/latest.json --data-dir <throwaway>`.
+      Check → "Version X.Y.Z is available"; Update now → progress bar,
+      "Installing…", Chatterbox restarts by itself; the new instance toasts
+      "Chatterbox updated from … to X.Y.Z", `last_boot.log` carries the
+      "update:" lines, the file under the old name is executable
+      (`ls -l`) and no `Chatterbox.old` / `Chatterbox.new` is left beside
+      it. Run from the app-grid install AND from a copy in ~/Downloads:
+      each replaces its own path. A wrong SHA-256 in the notes →
+      "SHA-256 mismatch", nothing replaced. Update now while captions run
+      → "Stop captions before updating". From a read-only folder (`/opt`)
+      → "Update failed — could not replace …", the app keeps running.
 - [ ] `Chatterbox --uninstall` removes the app and the grid entry and keeps
       the data; `--uninstall --purge` removes the data and
       `~/.config/Chatterbox` too. `Chatterbox --help` lists the switches.

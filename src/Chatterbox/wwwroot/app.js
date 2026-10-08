@@ -361,6 +361,50 @@ function renderBench(p) {
     `<tbody>${rows}</tbody></table><div class="benchsum">${esc(p.summary || '')}</div>`;
 }
 
+// ── updates (Settings → Updates; the backend talks to GitHub) ──
+let upd = null; // last sttUpdate payload
+function renderUpdate(p) {
+  upd = p;
+  $('updCurrent').textContent = p.current ? 'v' + p.current : '';
+  setToggle($('tglUpdAuto'), p.checkAtStartup);
+  const desc = $('updDesc'), check = $('btnUpdCheck'), inst = $('btnUpdInstall'), prog = $('updProg'), notes = $('updNotes');
+  check.disabled = false; check.textContent = 'Check for updates';
+  inst.hidden = true; inst.disabled = false; prog.hidden = true; notes.hidden = true;
+  const pct = p.total ? Math.round(p.received / p.total * 100) : 0;
+  switch (p.state) {
+    case 'unconfigured':
+      desc.textContent = 'This build has no update source configured, so it never contacts GitHub.';
+      check.disabled = true; break;
+    case 'checking':
+      desc.textContent = 'Checking GitHub…'; check.disabled = true; break;
+    case 'upToDate':
+      desc.textContent = `You have the latest version${p.latest ? ` (${p.latest})` : ''}.`; break;
+    case 'available':
+      desc.textContent = `Version ${p.latest} is available — ${MB(p.size)} download. Installing replaces the running file and restarts Chatterbox; captions must be stopped.`;
+      if (p.notes) { notes.textContent = p.notes; notes.hidden = false; }
+      inst.hidden = false; check.textContent = 'Check again'; break;
+    case 'downloading':
+      desc.textContent = `Downloading ${p.latest}… ${MB(p.received || 0)} of ${MB(p.total || p.size || 0)} (${pct}%)`;
+      prog.hidden = false; $('updBar').style.width = pct + '%';
+      inst.hidden = false; inst.disabled = true; check.disabled = true; break;
+    case 'installing':
+      desc.textContent = `Installing ${p.latest} — Chatterbox restarts in a moment…`;
+      inst.hidden = false; inst.disabled = true; check.disabled = true; break;
+    case 'error':
+      desc.textContent = p.error || 'Update failed'; break;
+    default:
+      desc.textContent = 'Looks up the latest release on GitHub. One small request; nothing about you is sent.';
+  }
+}
+$('btnUpdCheck').addEventListener('click', () => send({ action: 'sttCheckUpdate' }));
+$('btnUpdInstall').addEventListener('click', () => send({ action: 'sttInstallUpdate' }));
+toggleHandler($('tglUpdAuto'), () => {
+  if (!upd) return;
+  upd.checkAtStartup = !upd.checkAtStartup; // optimistic
+  setToggle($('tglUpdAuto'), upd.checkAtStartup);
+  send({ action: 'sttUpdateConfig', checkAtStartup: upd.checkAtStartup });
+});
+
 // ── about / license docs (embedded in the exe, fetched once) ───
 function renderDocs(p) {
   $('appVer').textContent = p.version ? 'v' + p.version : '';
@@ -452,6 +496,7 @@ function toast(ok, msg, action) {
       ev.stopPropagation();
       if (action.send) send(action.send);
       if (action.view) showView(action.view);
+      if (action.scrollTo) document.getElementById(action.scrollTo)?.scrollIntoView({ block: 'start' });
       el.remove();
     });
     el.appendChild(b);
@@ -484,6 +529,7 @@ function onMessage(raw) {
     case 'sttInstall': renderInstall(p); break;
     case 'sttPace': setPace(p); break;
     case 'sttBench': renderBench(p); break;
+    case 'sttUpdate': renderUpdate(p); break;
     case 'toast': toast(!!p.ok, p.msg, p.action); break;
     // 'log' intentionally ignored in the UI
   }
@@ -551,6 +597,9 @@ if (DEMO) {
   onMessage(JSON.stringify({ type: 'sttModelProgress', payload: { id: 'large-v3-turbo-q5', received: 368e6, total: 574e6 } }));
   $('capOlder').textContent = 'Sure, we can head over there in a minute.';
   $('capOlder').hidden = false;
+  onMessage(JSON.stringify({ type: 'sttUpdate', payload: { state: 'available', current: '1.6.0', configured: true, checkAtStartup: true,
+    latest: '1.6.1', title: 'Chatterbox 1.6.1 for Linux', pageUrl: '', size: 39.7e6, received: 0, total: 0,
+    notes: 'Live local speech-to-text captions for the VRChat chatbox. Linux x64, one self-contained file.\nSHA-256: 0000000000000000000000000000000000000000000000000000000000000000' } }));
   onMessage(JSON.stringify({ type: 'sttDocs', payload: { version: '1.2.0',
     readme: '# Chatterbox\n\nLive captions for VRChat. (Demo preview text.)',
     license: 'MIT License. (Demo preview text.)',

@@ -35,6 +35,14 @@ internal static class Program
     // in that callback.
     private static readonly TaskCompletionSource UiReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static volatile bool _exiting;
+    // Our own switches (never the game's command line in wrapper mode) and
+    // the binary's path as it was at start — read before any update
+    // renames it (/proc/self/exe follows the inode to its new name).
+    private static string[] _ownArgs = Array.Empty<string>();
+    private static string? _exePath;
+    // Set by RestartApp: after the window has closed, Main starts the
+    // successor and leaves.
+    private static string? _restartWhy;
     // The native window exists (WindowCreated), so Invoke can be marshaled
     // to it. Before that, a game-exit notice has nowhere to go.
     private static volatile bool _windowUp;
@@ -44,12 +52,14 @@ internal static class Program
     private static int Main(string[] args)
     {
         _bootTick = Environment.TickCount64;
+        _exePath = Environment.ProcessPath;
         InstallCrashHandlers();
         // Steam launch-option (wrapper) mode is recognized first: everything
         // after our own name is the game's command line, and none of it may
         // be read as one of our switches or test hooks.
         bool wrapperMode = args.Length > 0 && !args[0].StartsWith('-') && File.Exists(args[0]);
         var own = wrapperMode ? Array.Empty<string>() : args;
+        _ownArgs = own;
         // Switches that never open a window (LinuxInstaller does the work).
         if (own.Contains("--help") || own.Contains("-h")) { Console.WriteLine(Usage); return 0; }
         if (own.Contains("--install")) return Report(LinuxInstaller.Install());
@@ -71,6 +81,8 @@ internal static class Program
         var vrchatLogDir = ArgValue(own, "--vrchat-log-dir");
         bool assumeGame = own.Contains("--assume-vrchat-running");
         if (ArgValue(own, "--capture-command") is { } captureCmd) SttAudioDevices.CaptureCommandOverride = captureCmd;
+        // A fake "latest release" document standing in for the GitHub API.
+        if (ArgValue(own, "--update-url") is { } updateUrl) AppUpdater.LatestReleaseUrlOverride = updateUrl;
 
         // Steam launch-option wrapper mode: setting VRChat's launch options
         // to  /path/to/Chatterbox %command%  makes Steam start US with the
@@ -183,6 +195,7 @@ internal static class Program
         SttModelManager.SetUserAgent(ua);
         SttGpuPack.SetUserAgent(ua);
         SttEnginePack.SetUserAgent(ua);
+        AppUpdater.SetUserAgent(ua);
         // The machine profile runs tools (nvidia-smi, lspci) that can each take
         // seconds on a bad day; it is gathered while the window comes up.
         var machineTask = Task.Run(() => MachineProfile.Describe());
@@ -237,6 +250,15 @@ internal static class Program
         if (!machineTask.IsCompleted)
             _ = machineTask.ContinueWith(t => BootLog.Append("machine: " + (t.IsCompletedSuccessfully ? t.Result : "profile failed")));
         BootLog.Append("cuda: " + SttGpuPack.Status());
+        // An update the previous start installed: clear its leftovers and
+        // say so (the toast waits for the page like everything else).
+        if (AppUpdater.LatestReleaseUrlOverride is { } updateSource)
+            BootLog.Append($"update source overridden: {updateSource}");
+        if (new AppUpdater { ExePath = _exePath ?? Path.Combine(AppContext.BaseDirectory, AppUpdater.ExeName) }.FinishPendingUpdate() is { } updated)
+        {
+            BootLog.Append("update: " + updated);
+            SendToUi("toast", new { ok = true, msg = "Chatterbox " + updated });
+        }
         if (unfinished != null)
             BootLog.Append($"previous start ({unfinished.Version} at {unfinished.StartedAt:HH:mm:ss}, pid {unfinished.Pid}) " +
                            "never reached the window — crashed or was killed. SAFE BOOT: captions won't auto-start " +
@@ -279,6 +301,7 @@ internal static class Program
         _window.Load(indexPath);
         _window.WaitForClose();
         _exiting = true;
+        if (_restartWhy != null) LaunchSuccessor(_restartWhy);
         // The watcher's poll must not reach a controller that is being
         // disposed (the usings unwind ctrl first).
         watcher.Stop();
@@ -298,6 +321,7 @@ internal static class Program
         "  Chatterbox --install-gpu           Download GPU acceleration for Whisper (CUDA) from a terminal, progress on stdout\n" +
         "  Chatterbox <game command...>       Steam launch-option mode (\"/path/to/Chatterbox %command%\"): start the game, exit with it\n" +
         "  --data-dir <dir>  --vrchat-log-dir <dir>  --assume-vrchat-running   test hooks (tools/smoke.sh)\n" +
+        "  --update-url <url>                 test hook: a \"latest release\" JSON document standing in for GitHub's API\n" +
         "  --capture-command <cmd>            test hook: a shell command writing raw 16 kHz mono s16le PCM to stdout replaces the recorder (tools/soak.sh)\n";
 
     // "--install-gpu": the Models screen's GPU acceleration download from a
@@ -453,33 +477,64 @@ internal static class Program
         catch { /* already gone */ }
     }
 
-    // Relaunch for a native-runtime change (the GPU pack binds at load
-    // time): start a fresh process that waits for this one, then leave.
-    private static void RestartApp()
+    // Relaunch — for a native-runtime change (the GPU pack binds at load
+    // time) or to run a freshly installed update. The window closes first;
+    // once WaitForClose returns, Main launches the successor
+    // (LaunchSuccessor), so the new process starts after this one has
+    // left its window behind and finds the instance lock about to go.
+    private static void RestartApp(string why)
     {
         if (_exiting) return;
+        _restartWhy = why;
+        _exiting = true;
+        BootLog.Append($"restarting {why}");
+        // Off the window thread: this runs inside a WebView callback, and
+        // the close should happen after that callback has returned.
+        _ = Task.Run(() => { try { _window.Invoke(() => _window.Close()); } catch { } });
+    }
+
+    // Starts the next instance from the path this one was started from —
+    // after an update, the new binary under the same name — which waits
+    // for this process (--after) before taking the instance lock. Only
+    // our own switches are carried over: in Steam wrapper mode the game's
+    // command line was never ours, and the restarted app must not launch
+    // the game again.
+    private static void LaunchSuccessor(string why)
+    {
         try
         {
-            var exe = Environment.ProcessPath ?? throw new InvalidOperationException("no process path");
+            var exe = _exePath ?? throw new InvalidOperationException("no process path");
             var psi = new ProcessStartInfo(exe)
             {
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(exe) ?? "",
             };
+            foreach (var a in ForwardedArgs(_ownArgs)) psi.ArgumentList.Add(a);
             psi.ArgumentList.Add("--after");
             psi.ArgumentList.Add(Environment.ProcessId.ToString());
             Process.Start(psi)?.Dispose();
-            BootLog.Append("restarting to activate GPU acceleration (user's choice)");
         }
         catch (Exception ex)
         {
             ErrorLog.WriteEntry("RestartApp", ex);
-            return;
+            BootLog.Append($"restart {why} FAILED to launch the new process: {ex.Message}");
         }
-        _exiting = true;
-        // Off the window thread: this runs inside a WebView callback, and
-        // the close should happen after that callback has returned.
-        _ = Task.Run(() => { try { _window.Invoke(() => _window.Close()); } catch { } });
+    }
+
+    private static readonly string[] ValueFlags = { "--data-dir", "--vrchat-log-dir", "--capture-command", "--update-url" };
+    private static readonly string[] SwitchFlags = { "--assume-vrchat-running" };
+
+    private static IEnumerable<string> ForwardedArgs(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (SwitchFlags.Contains(args[i])) yield return args[i];
+            else if (ValueFlags.Contains(args[i]) && i + 1 < args.Length)
+            {
+                yield return args[i];
+                yield return args[++i];
+            }
+        }
     }
 
     private static void SendToUi(string type, object? payload) =>

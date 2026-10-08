@@ -143,6 +143,16 @@
           <div class="bench" id="benchOut" hidden></div></span>
           <button class="chipbtn amber" id="btnBench">Run speed check</button></div>
       </div>
+      <div class="group" id="updGroup">
+        <h3>Updates</h3>
+        <div class="setrow"><span class="grow"><span class="name">Check for updates <span class="fixed-note" id="updCurrent"></span></span><div class="desc" id="updDesc">Looks up the latest release on GitHub. One small request; nothing about you is sent.</div>
+          <div class="updnotes" id="updNotes" hidden></div>
+          <div class="progress updprog" id="updProg" hidden><i id="updBar" style="width:0%"></i></div></span>
+          <button class="chipbtn amber" id="btnUpdInstall" hidden>Update now</button>
+          <button class="chipbtn" id="btnUpdCheck">Check for updates</button></div>
+        <div class="setrow last"><span class="grow"><span class="name">Check when Chatterbox starts</span><div class="desc">Tells you at startup when a newer version exists — nothing installs by itself. Off: Chatterbox never contacts GitHub unless you press Check.</div></span>
+          <span class="toggle" id="tglUpdAuto" role="switch" aria-checked="false" tabindex="0"><i></i><b></b></span></div>
+      </div>
       <div class="group">
         <h3>About</h3>
         <div class="setrow"><span class="grow"><span class="name">Chatterbox <span class="fixed-note" id="appVer"></span></span><div class="desc">Live captions for VRChat. Runs entirely on this machine — no accounts, no telemetry.</div><div class="desc" id="machineLine"></div></span></div>

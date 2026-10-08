@@ -27,6 +27,10 @@ public class SttSettings
     public bool AutoStartEnabled { get; set; } = false;
     public List<AutoFriend> AutoStartFriends { get; set; } = new();
 
+    // Ask GitHub for a newer release once at startup (AppUpdater). Off by
+    // default: without it the app never goes online unasked.
+    public bool CheckUpdatesAtStartup { get; set; } = false;
+
     public class AutoFriend
     {
         public string Id { get; set; } = "";

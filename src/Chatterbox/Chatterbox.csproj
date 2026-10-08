@@ -9,7 +9,12 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>Chatterbox</AssemblyName>
     <RootNamespace>Chatterbox</RootNamespace>
-    <Version>1.5.4</Version>
+    <Version>1.6.0</Version>
+    <!-- owner/name of the GitHub repository releases are published to; the
+         in-app updater (AppUpdater) asks its Releases API for the latest
+         one. Empty = no update source: Settings > Updates says so and the
+         app never contacts GitHub. -->
+    <UpdateRepository>netizen-kruze/Chatterbox-Linux</UpdateRepository>
     <Product>Chatterbox</Product>
     <AssemblyTitle>Chatterbox — live captions for VRChat (Linux)</AssemblyTitle>
     <Company>Chatterbox</Company>
@@ -98,6 +103,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Chatterbox.Tests" />
+    <!-- Baked into the assembly for AppUpdater.Repository; absent when unset. -->
+    <AssemblyMetadata Include="UpdateRepository" Value="$(UpdateRepository)" Condition="'$(UpdateRepository)' != ''" />
   </ItemGroup>
 
 </Project>

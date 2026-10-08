@@ -135,17 +135,26 @@ recommended engine) is fast on the CPU either way and needs none of this.
 
 ## Updates
 
-New versions ship as a fresh single file — run it once and press **Add to
-app grid** again (or `Chatterbox-<version>-linux-x64 --install`) to replace
+**Settings → Updates → Check for updates** asks this repository's GitHub
+Releases page for a newer version and installs it in place: the new file
+is downloaded, checked against the SHA-256 published with the release,
+given its executable bit, swapped in under the running binary's name
+(wherever that is — the app-grid install in `~/.local/share/Chatterbox/app`,
+or the file you ran from Downloads) and Chatterbox restarts. Turn on
+**Check when Chatterbox starts** to be told at startup when a new version
+exists (it never installs anything by itself). Your settings, auto-start
+players, downloaded models and logs live in `~/.local/share/Chatterbox/`
+and survive updates. The optional Parakeet engine and GPU acceleration
+packs live there too, under `runtimes/`, so an update never touches them
+(packs an older version put next to the binary are moved there on the
+next start).
+
+Manual updates still work: run the new file once and press **Add to app
+grid** again (or `Chatterbox-<version>-linux-x64 --install`) to replace
 the installed copy; the old copy may still be running while that happens.
-Your settings, auto-start players, downloaded models and logs live in
-`~/.local/share/Chatterbox/` and survive updates. The optional Parakeet
-engine and GPU acceleration packs live there too, under `runtimes/`, so an
-update never touches them (packs an older version put next to the binary
-are moved there on the next start). When a new version needs a newer
-voice-detection model (under 1 MB), Chatterbox downloads and verifies it
-by itself the first time it starts — the one download it makes without
-you pressing Download.
+When a new version needs a newer voice-detection model (under 1 MB),
+Chatterbox downloads and verifies it by itself the first time it starts —
+the one download it makes without you pressing Download.
 
 To uninstall: `~/.local/share/Chatterbox/app/Chatterbox --uninstall`
 removes the program and the app-grid entry and keeps your data;
@@ -164,6 +173,10 @@ complete network activity:
   download that starts on its own: after an update that changed the small
   voice-detection model, the new file (under 1 MB, same source, same
   checksum check) is fetched the first time Chatterbox starts.
+- Checking for updates — when you press **Check for updates**, or at
+  startup if you turned that on (off by default): one request to GitHub's
+  Releases API, which sees the app's name and version and nothing else.
+  Pressing **Update now** then downloads the release file from GitHub.
 - Caption text to VRChat over OSC on **your own machine only**
   (`127.0.0.1:9000` — never leaves the PC).
 

@@ -179,7 +179,8 @@ public sealed class StandaloneSttController : IDisposable
 
     // The pace advice can ask the host to relaunch the app: the GPU pack
     // binds at native load time, so an install only counts after a restart.
-    public event Action? RestartRequested;
+    // An installed update asks for the same, to run the new binary.
+    public event Action<string>? RestartRequested;
 
     // Boot-time auto-start — PresenceWatcher.Start() rebuilds the roster
     // without events, so a watched player already present at launch must
@@ -209,6 +210,11 @@ public sealed class StandaloneSttController : IDisposable
         lock (_settingsLock)
             if (!SttSettings.ProvisionalDefaults && !SttSettings.FileExists) _settings.Save();
         RunBootReconcile("page connected");
+        // The optional startup check waits for the boot work (auto-start,
+        // the voice detector) to settle first.
+        if (_settings.CheckUpdatesAtStartup && AppUpdater.IsConfigured)
+            _startupUpdateCheck = new System.Threading.Timer(_ => _ = RunUpdateCheckAsync(startup: true),
+                null, StartupUpdateCheckDelayMs, Timeout.Infinite);
     }
 
     private void RunBootReconcile(string why)
@@ -294,6 +300,139 @@ public sealed class StandaloneSttController : IDisposable
         SendModels();
         SendDevices();
         return (ok, error);
+    }
+
+    // ── updates (AppUpdater): Settings → Updates, and the optional startup check ──
+    private readonly AppUpdater _updater = new();
+    private UpdateInfo? _update;            // the newer release the last check found
+    private Version? _latestSeen;           // what the last successful check called latest
+    private string _updateState = AppUpdater.IsConfigured ? "idle" : "unconfigured";
+    private int _updateBusy;                // a check or an install is in progress
+    private long _lastUpdateProgressAt;
+    private System.Threading.Timer? _startupUpdateCheck;
+    private const int StartupUpdateCheckDelayMs = 6000;
+
+    private void SendUpdateState(string state, string? error = null, long received = 0, long total = 0)
+    {
+        _updateState = state;
+        var u = _update;
+        _send("sttUpdate", new
+        {
+            state,
+            current = AppUpdater.CurrentVersion.ToString(3),
+            configured = AppUpdater.IsConfigured,
+            checkAtStartup = _settings.CheckUpdatesAtStartup,
+            latest = (u?.Version ?? _latestSeen)?.ToString(3) ?? "",
+            title = u?.Title ?? "",
+            notes = u?.Notes ?? "",
+            pageUrl = u?.PageUrl ?? "",
+            size = u?.AssetSize ?? 0,
+            error,
+            received,
+            total,
+        });
+    }
+
+    // One request to the Releases API. From the button every outcome is
+    // shown; at startup only a newer release is worth a word (a toast), the
+    // rest goes to the boot log.
+    private async Task RunUpdateCheckAsync(bool startup)
+    {
+        if (!AppUpdater.IsConfigured) { SendUpdateState("unconfigured"); return; }
+        if (Interlocked.Exchange(ref _updateBusy, 1) != 0) return;
+        try
+        {
+            if (!startup) SendUpdateState("checking");
+            var r = await _updater.CheckAsync();
+            if (r.Latest != null) _latestSeen = r.Latest;
+            if (r.Error != null)
+            {
+                BootLog.Append($"update check failed: {r.Error}");
+                if (!startup) SendUpdateState("error", $"Couldn't check for updates — {r.Error}");
+                return;
+            }
+            _update = r.Update;
+            if (r.Update == null)
+            {
+                BootLog.Append($"update check: up to date ({r.Latest?.ToString(3)} is the latest release)");
+                SendUpdateState("upToDate");
+                return;
+            }
+            BootLog.Append($"update check: {r.Update.Version.ToString(3)} is available");
+            SendUpdateState("available");
+            if (startup)
+                _send("toast", new
+                {
+                    ok = false,
+                    msg = $"Chatterbox {r.Update.Version.ToString(3)} is available — install it from Settings → Updates",
+                    action = new { label = "Open Updates", view = "settings", scrollTo = "updGroup" },
+                });
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteEntry("UpdateCheck", ex);
+            if (!startup) SendUpdateState("error", $"Couldn't check for updates — {ex.Message}");
+        }
+        finally { _updateBusy = 0; }
+    }
+
+    // Download, verify, swap the binary, restart. Captions must be
+    // stopped: the restart would cut a session short.
+    private async Task RunUpdateInstallAsync()
+    {
+        if (IsRunning || _loading)
+        {
+            _send("toast", new { ok = false, msg = "Stop captions before updating" });
+            return;
+        }
+        if (Interlocked.Exchange(ref _updateBusy, 1) != 0) return;
+        try
+        {
+            var u = _update;
+            if (u == null)
+            {
+                SendUpdateState("checking");
+                var r = await _updater.CheckAsync();
+                if (r.Latest != null) _latestSeen = r.Latest;
+                if (r.Error != null) { SendUpdateState("error", $"Couldn't check for updates — {r.Error}"); return; }
+                _update = u = r.Update;
+                if (u == null) { SendUpdateState("upToDate"); return; }
+            }
+            SendUpdateState("downloading", received: 0, total: u.AssetSize);
+            var (staged, error) = await _updater.DownloadAsync(u, (got, total) =>
+            {
+                long now = Environment.TickCount64;
+                if (now - _lastUpdateProgressAt < 150 && got != total) return;
+                _lastUpdateProgressAt = now;
+                SendUpdateState("downloading", received: got, total: total);
+            });
+            if (staged == null)
+            {
+                BootLog.Append($"update to {u.Version.ToString(3)} failed: {error}");
+                SendUpdateState("error", $"Update failed — {error}");
+                _send("toast", new { ok = false, msg = $"Update failed — {error}" });
+                return;
+            }
+            SendUpdateState("installing");
+            string? applyError;
+            // Nothing may start a session while the binary changes underneath.
+            lock (_sessionLock) { applyError = _updater.Apply(staged, u.Version); }
+            if (applyError != null)
+            {
+                BootLog.Append($"update to {u.Version.ToString(3)} failed: {applyError}");
+                SendUpdateState("error", $"Update failed — {applyError}");
+                _send("toast", new { ok = false, msg = $"Update failed — {applyError}" });
+                return;
+            }
+            BootLog.Append($"update: {u.Version.ToString(3)} installed in place of {AppUpdater.CurrentVersion.ToString(3)} at {_updater.ExePath}; restarting");
+            RestartRequested?.Invoke($"to finish updating to {u.Version.ToString(3)}");
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteEntry("UpdateInstall", ex);
+            SendUpdateState("error", $"Update failed — {ex.Message}");
+        }
+        finally { _updateBusy = 0; }
     }
 
     // Session work requested from the UI thread runs here: an engine load
@@ -481,6 +620,25 @@ public sealed class StandaloneSttController : IDisposable
                 SendModels();
                 SendState();
                 SendPlayers();
+                SendUpdateState(_updateState);
+                break;
+
+            case "sttCheckUpdate":
+                _ = RunUpdateCheckAsync(startup: false);
+                break;
+
+            case "sttInstallUpdate":
+                _ = RunUpdateInstallAsync();
+                break;
+
+            case "sttUpdateConfig":
+                lock (_settingsLock)
+                {
+                    _settings.CheckUpdatesAtStartup = msg["checkAtStartup"]?.Value<bool>() ?? _settings.CheckUpdatesAtStartup;
+                    _settings.Save();
+                }
+                SendUpdateState(_updateState);
+                _send("toast", new { ok = true, msg = "Saved" });
                 break;
 
             // Settings > About: the license documents live inside the
@@ -626,7 +784,7 @@ public sealed class StandaloneSttController : IDisposable
                 break;
 
             case "sttRestartApp":
-                RestartRequested?.Invoke();
+                RestartRequested?.Invoke("to activate GPU acceleration (user's choice)");
                 break;
 
             // Settings > Desktop: the binary installs itself into the app
@@ -1612,6 +1770,7 @@ public sealed class StandaloneSttController : IDisposable
         Interlocked.Exchange(ref _bootReconcileDone, 1);
         _provisionalRecheck?.Dispose();
         _bootFallback?.Dispose();
+        _startupUpdateCheck?.Dispose();
         // Wait out any in-flight timer ticks before Stop() nulls _service.
         using (var done = new ManualResetEvent(false))
             if (_meterTimer.Dispose(done)) done.WaitOne(1000);
