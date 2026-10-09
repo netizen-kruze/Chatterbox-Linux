@@ -302,18 +302,24 @@ public static class LinuxHost
     // app runs unguarded — better two windows than none.
     public static IDisposable? TryLockInstance(string path)
     {
+        // A folder that cannot take a file at all (read-only, full disk)
+        // must not read as "already running": probed with a file of its
+        // own, NOT by opening the lock file — on Unix every FileStream
+        // takes a flock (shared unless FileShare.None), so even a
+        // "no-lock" open of the lock file fails while the running
+        // instance holds it exclusively. That failure runs the app
+        // unguarded and is logged.
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            // First without the lock: a folder that cannot take the file at
-            // all (full disk, read-only) must not read as "already running"
-            // — that failure runs the app unguarded and is logged.
-            using (new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite)) { }
+            var dir = Path.GetDirectoryName(path)!;
+            Directory.CreateDirectory(dir);
+            var probe = Path.Combine(dir, $".chatterbox-write-test-{Environment.ProcessId}");
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
         }
         catch (Exception ex) { ErrorLog.WriteEntry("SingleInstance", ex); return new MemoryStream(); }
         try
         {
-            // Only this open can fail for the lock: the file is there and writable.
             var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             try { stream.SetLength(0); stream.Write(Encoding.ASCII.GetBytes(Environment.ProcessId.ToString())); stream.Flush(); } catch { }
             return stream;
