@@ -9,7 +9,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>Chatterbox</AssemblyName>
     <RootNamespace>Chatterbox</RootNamespace>
-    <Version>1.7.1</Version>
+    <Version>1.7.2</Version>
     <!-- owner/name of the GitHub repository releases are published to; the
          in-app updater (AppUpdater) asks its Releases API for the latest
          one. Empty = no update source: Settings > Updates says so and the

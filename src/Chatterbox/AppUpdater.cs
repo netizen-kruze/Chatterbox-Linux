@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -31,10 +33,21 @@ public sealed record UpdateCheck(UpdateInfo? Update, Version? Latest, string? Er
 // and it carries the single linux-x64 file plus a SHA-256 line in its
 // notes (the release checklist puts one there). Install: the file is
 // downloaded, hashed against that line, given its executable bit and
-// staged beside the running binary; the running binary is renamed aside —
-// a rename never disturbs a running process on Linux, its inode lives on
-// — the new one takes its name, and the app restarts. The next start
+// staged beside the running binary as Chatterbox.new; a marker records
+// the pending update; the app exits and a helper (SwapHelper) does the
+// swap AFTER the process is gone — the running binary renamed aside, the
+// new one under its name — then starts the new version. The next start
 // removes the old file and reports the update in the boot log and a toast.
+//
+// Why not swap in place and then restart? A single-file .NET binary is
+// its own assembly store: every assembly the app has not touched yet is
+// read from the executable, by the path the host resolved at startup, at
+// the moment it is first needed. Rename or replace that file while the
+// process lives and the next first-time load fails (FileNotFoundException
+// for a framework assembly) — verified on 1.7.1: the swap "worked" only
+// as long as nothing new was loaded before the restart, which depends on
+// what the session happened to do. So no managed code may run after the
+// swap in the process being replaced; the helper is a /bin/sh script.
 //
 // Whichever path the app runs from is the path replaced: the app-grid
 // install in ~/.local/share/Chatterbox/app, or a download run in place.
@@ -228,25 +241,28 @@ public sealed class AppUpdater
         }
     }
 
-    // Puts the staged binary in place: the running one is renamed aside
-    // (Chatterbox.old — it keeps running, a rename only changes the
-    // directory entry) and the new one renamed under its name, both within
-    // the same folder, so the swap is two renames and never a copy over a
-    // file in use. The caller restarts the app. Returns the error, or null.
-    public string? Apply(string stagedExe, Version to)
+    // The staged binary waiting beside the running one, once PrepareSwap
+    // accepted it; null until then. Program hands it to the swap helper
+    // when the window has closed.
+    public string? PendingSwap { get; private set; }
+
+    // Accepts the staged binary for the swap: checks it is there and can
+    // take the running file's place (same folder, writable), records the
+    // pending update in the marker the next start reads, and remembers the
+    // file as PendingSwap. The renames themselves happen in SwapHelper
+    // after this process has exited — see the note at the top. Returns the
+    // error, or null.
+    public string? PrepareSwap(string stagedExe, Version to)
     {
-        var old = ExePath + ".old";
         try
         {
             if (!File.Exists(stagedExe)) return "the downloaded file is gone";
-            if (File.Exists(old)) File.Delete(old);
-            File.Move(ExePath, old);
-            try { File.Move(stagedExe, ExePath); }
-            catch
-            {
-                File.Move(old, ExePath);   // the running binary gets its name back
-                throw;
-            }
+            if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(stagedExe)), Path.GetDirectoryName(Path.GetFullPath(ExePath)), StringComparison.Ordinal))
+                return "the downloaded file is not beside the running binary";
+            // The helper's mv needs the folder, not the file, to be
+            // writable; say so now rather than fail silently after exit.
+            var dir = Path.GetDirectoryName(Path.GetFullPath(ExePath))!;
+            if (!SttPaths.IsWritable(dir)) return $"{dir} is not writable";
             Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath)!);
             File.WriteAllText(MarkerPath, JsonConvert.SerializeObject(new
             {
@@ -254,11 +270,67 @@ public sealed class AppUpdater
                 to = to.ToString(3),
                 at = DateTime.UtcNow.ToString("o"),
             }));
+            PendingSwap = stagedExe;
             return null;
         }
         catch (Exception ex)
         {
             return $"could not replace {ExePath} — {ex.Message}";
+        }
+    }
+
+    // The helper, as a /bin/sh script. Positional parameters: the binary's
+    // path, the pid to outlive, 1 to start the new binary afterwards (0 to
+    // stop after the swap), then the arguments for that start. It waits
+    // for the process to be gone (bounded — a hung exit must not hold the
+    // update forever), swaps with two renames in the same folder, puts
+    // the old file back if the second rename fails, and exec's the new
+    // binary under its real name. Nothing of it runs inside the process
+    // being replaced. Paths travel as parameters, never inside the script
+    // text, so no quoting can go wrong.
+    public const string SwapScript =
+        "exe=\"$1\"; pid=\"$2\"; relaunch=\"$3\"; shift 3\n" +
+        "n=0\n" +
+        "while [ \"$n\" -lt 300 ] && kill -0 \"$pid\" 2>/dev/null; do sleep 0.2; n=$((n+1)); done\n" +
+        "if [ -f \"$exe.new\" ]; then\n" +
+        "  rm -f \"$exe.old\"\n" +
+        "  if mv -f \"$exe\" \"$exe.old\" && mv -f \"$exe.new\" \"$exe\"; then :; else mv -f \"$exe.old\" \"$exe\" 2>/dev/null; fi\n" +
+        "fi\n" +
+        "if [ \"$relaunch\" = 1 ]; then exec \"$exe\" \"$@\"; fi\n" +
+        "exit 0\n";
+
+    // The helper's start info: /bin/sh with the script and its parameters.
+    // Public so a test can run the real thing against a fake binary.
+    public static ProcessStartInfo SwapHelper(string exe, int waitForPid, bool relaunch, IEnumerable<string> relaunchArgs)
+    {
+        var psi = new ProcessStartInfo("/bin/sh")
+        {
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(exe) ?? "",
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(SwapScript);
+        psi.ArgumentList.Add("chatterbox-update");   // $0
+        psi.ArgumentList.Add(exe);
+        psi.ArgumentList.Add(waitForPid.ToString(CultureInfo.InvariantCulture));
+        psi.ArgumentList.Add(relaunch ? "1" : "0");
+        foreach (var a in relaunchArgs) psi.ArgumentList.Add(a);
+        LinuxHost.StripSteamPreload(psi);
+        return psi;
+    }
+
+    // Starts the helper for this process; it does its work once the
+    // process has exited. Returns the error, or null.
+    public static string? StartSwapHelper(string exe, bool relaunch, IEnumerable<string> relaunchArgs)
+    {
+        try
+        {
+            Process.Start(SwapHelper(exe, Environment.ProcessId, relaunch, relaunchArgs))?.Dispose();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
         }
     }
 
@@ -282,7 +354,7 @@ public sealed class AppUpdater
             var now = CurrentVersion.ToString(3);
             return now == to
                 ? $"updated from {from} to {to}"
-                : $"update to {to} was applied, but this is version {now}";
+                : $"update to {to} was prepared, but this is version {now} — the file was not swapped";
         }
         catch (Exception ex)
         {

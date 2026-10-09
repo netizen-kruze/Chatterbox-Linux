@@ -253,10 +253,37 @@ public class AppUpdaterTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_appDir, "Chatterbox.new")));
     }
 
-    // ── apply + the next start ──
+    // ── prepare, the helper's swap, and the next start ──
+
+    // A stand-in binary that records how it was started: the helper
+    // exec's it under the real name after the swap.
+    private static string RecordingScript(string tag) =>
+        "#!/bin/sh\nprintf '%s|%s\\n' \"" + tag + "\" \"$*\" >> \"$0.ran\"\n";
+
+    private static void WriteScript(string path, string tag)
+    {
+        File.WriteAllText(path, RecordingScript(tag));
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
+
+    // Runs the real helper (/bin/sh) and waits for it; the pid it waits
+    // for belongs to a short sleep, so the swap must come after that.
+    private static TimeSpan RunHelper(string exe, bool relaunch, params string[] relaunchArgs)
+    {
+        using var stand_in = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/sh")
+        {
+            ArgumentList = { "-c", "sleep 0.7" }, UseShellExecute = false,
+        })!;
+        var t0 = System.Diagnostics.Stopwatch.StartNew();
+        using var helper = System.Diagnostics.Process.Start(AppUpdater.SwapHelper(exe, stand_in.Id, relaunch, relaunchArgs))!;
+        Assert.True(helper.WaitForExit(30_000), "the helper did not finish");
+        Assert.Equal(0, helper.ExitCode);
+        stand_in.WaitForExit();
+        return t0.Elapsed;
+    }
 
     [Fact]
-    public void Apply_SwapsTheBinaryAndTheNextStartCleansUp()
+    public void PrepareSwap_StagesWithoutTouchingTheRunningBinary()
     {
         var oldBytes = new byte[] { 1, 1, 1 };
         var newBytes = new byte[] { 2, 2, 2, 2 };
@@ -265,14 +292,38 @@ public class AppUpdaterTests : IDisposable
         File.WriteAllBytes(staged, newBytes);
         var updater = Updater(new FakeHandler());
 
-        Assert.Null(updater.Apply(staged, new Version(99, 1, 2)));
-        Assert.Equal(newBytes, File.ReadAllBytes(_exe));
-        Assert.Equal(oldBytes, File.ReadAllBytes(_exe + ".old"));
-        Assert.False(File.Exists(staged));
+        Assert.Null(updater.PendingSwap);
+        Assert.Null(updater.PrepareSwap(staged, new Version(99, 1, 2)));
+        // Nothing moved: the process that runs _exe keeps reading its own
+        // file until it has exited (see the note in AppUpdater).
+        Assert.Equal(oldBytes, File.ReadAllBytes(_exe));
+        Assert.Equal(newBytes, File.ReadAllBytes(staged));
+        Assert.False(File.Exists(_exe + ".old"));
+        Assert.Equal(staged, updater.PendingSwap);
         Assert.True(File.Exists(_marker));
         var marker = JObject.Parse(File.ReadAllText(_marker));
         Assert.Equal(AppUpdater.CurrentVersion.ToString(3), marker["from"]?.ToString());
         Assert.Equal("99.1.2", marker["to"]?.ToString());
+    }
+
+    [Fact]
+    public void TheHelperSwapsAfterTheProcessIsGoneAndStartsTheNewBinary()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        WriteScript(_exe, "old");
+        WriteScript(_exe + ".new", "new");
+        var updater = Updater(new FakeHandler());
+        Assert.Null(updater.PrepareSwap(_exe + ".new", new Version(99, 1, 2)));
+
+        var elapsed = RunHelper(_exe, relaunch: true, "--after", "4242", "--data-dir", "/tmp/x y");
+
+        Assert.True(elapsed >= TimeSpan.FromMilliseconds(600), $"the helper swapped before the process was gone ({elapsed.TotalMilliseconds:F0} ms)");
+        Assert.Equal(RecordingScript("new"), File.ReadAllText(_exe));          // the new file under the real name
+        Assert.Equal(RecordingScript("old"), File.ReadAllText(_exe + ".old")); // the old one aside
+        Assert.False(File.Exists(_exe + ".new"));
+        Assert.True(File.GetUnixFileMode(_exe).HasFlag(UnixFileMode.UserExecute));
+        // The new binary ran, under the real name, with the forwarded arguments intact.
+        Assert.Equal("new|--after 4242 --data-dir /tmp/x y\n", File.ReadAllText(_exe + ".ran"));
 
         // The "next start" (same test build, so the version doesn't match 99.1.2).
         var note = updater.FinishPendingUpdate();
@@ -283,30 +334,74 @@ public class AppUpdaterTests : IDisposable
     }
 
     [Fact]
-    public void Apply_ReplacesWhateverPathTheAppRunsFrom()
+    public void TheHelperWithoutARelaunchOnlySwaps()
     {
+        if (!OperatingSystem.IsLinux()) return;
         // Not the app-grid folder: a download run from ~/Downloads updates
-        // itself in place too.
+        // itself in place too (--update from a terminal: no relaunch).
         var elsewhere = Path.Combine(_dir, "Downloads", "Chatterbox-1.0.0-linux-x64");
         Directory.CreateDirectory(Path.GetDirectoryName(elsewhere)!);
-        File.WriteAllBytes(elsewhere, new byte[] { 1 });
-        File.WriteAllBytes(elsewhere + ".new", new byte[] { 2, 2 });
+        WriteScript(elsewhere, "old");
+        WriteScript(elsewhere + ".new", "new");
         var updater = new AppUpdater(new HttpClient(new FakeHandler())) { ReleaseUrl = LatestUrl, ExePath = elsewhere, MarkerPath = _marker };
+        Assert.Null(updater.PrepareSwap(elsewhere + ".new", new Version(99, 0, 0)));
 
-        Assert.Null(updater.Apply(elsewhere + ".new", new Version(99, 0, 0)));
-        Assert.Equal(new byte[] { 2, 2 }, File.ReadAllBytes(elsewhere));
+        RunHelper(elsewhere, relaunch: false);
+
+        Assert.Equal(RecordingScript("new"), File.ReadAllText(elsewhere));
+        Assert.False(File.Exists(elsewhere + ".ran"));      // nothing was started
         Assert.False(File.Exists(_exe));                    // the app-grid path was never touched
         Assert.NotNull(updater.FinishPendingUpdate());
         Assert.False(File.Exists(elsewhere + ".old"));
     }
 
     [Fact]
-    public void Apply_WithoutAStagedFile_LeavesTheBinaryAlone()
+    public void TheHelperWithNothingStagedJustRestartsTheApp()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        // A plain restart (GPU activation) goes through the same path
+        // when nothing is staged: no swap, the binary runs as it is.
+        WriteScript(_exe, "same");
+        RunHelper(_exe, relaunch: true, "--after", "1");
+        Assert.Equal(RecordingScript("same"), File.ReadAllText(_exe));
+        Assert.False(File.Exists(_exe + ".old"));
+        Assert.Equal("same|--after 1\n", File.ReadAllText(_exe + ".ran"));
+    }
+
+    [Fact]
+    public void TheHelperIsAShellWithPathsAsParametersNotScriptText()
+    {
+        var psi = AppUpdater.SwapHelper("/home/u/it's here/Chatterbox", 123, relaunch: true, new[] { "--after", "123" });
+        Assert.Equal("/bin/sh", psi.FileName);
+        Assert.Equal("-c", psi.ArgumentList[0]);
+        Assert.Equal(AppUpdater.SwapScript, psi.ArgumentList[1]);
+        Assert.DoesNotContain("Chatterbox", AppUpdater.SwapScript);       // no path is ever interpolated
+        Assert.Equal(new[] { "/home/u/it's here/Chatterbox", "123", "1", "--after", "123" }, psi.ArgumentList.Skip(3));
+        Assert.Equal("/home/u/it's here", psi.WorkingDirectory);
+        Assert.Equal("0", AppUpdater.SwapHelper("/x/Chatterbox", 1, relaunch: false, Array.Empty<string>()).ArgumentList[5]);
+    }
+
+    [Fact]
+    public void PrepareSwap_WithoutAStagedFile_LeavesTheBinaryAlone()
     {
         File.WriteAllBytes(_exe, new byte[] { 7 });
-        var error = Updater(new FakeHandler()).Apply(_exe + ".new", new Version(99, 0, 0));
+        var updater = Updater(new FakeHandler());
+        var error = updater.PrepareSwap(_exe + ".new", new Version(99, 0, 0));
         Assert.NotNull(error);
+        Assert.Null(updater.PendingSwap);
         Assert.Equal(new byte[] { 7 }, File.ReadAllBytes(_exe));
+        Assert.False(File.Exists(_marker));
+    }
+
+    [Fact]
+    public void PrepareSwap_RefusesAFileThatIsNotBesideTheBinary()
+    {
+        File.WriteAllBytes(_exe, new byte[] { 7 });
+        var stray = Path.Combine(_dir, "Chatterbox.new");       // the data folder, not the app folder
+        File.WriteAllBytes(stray, new byte[] { 8 });
+        var updater = Updater(new FakeHandler());
+        Assert.Contains("beside", updater.PrepareSwap(stray, new Version(99, 0, 0)));
+        Assert.Null(updater.PendingSwap);
         Assert.False(File.Exists(_marker));
     }
 

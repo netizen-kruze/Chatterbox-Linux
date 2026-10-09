@@ -210,9 +210,11 @@ was also accurate. The picker lists the languages it does best.
 **Settings → Updates → Check for updates** asks this repository's GitHub
 Releases page for a newer version and installs it in place: the new file
 is downloaded, checked against the SHA-256 published with the release,
-given its executable bit, swapped in under the running binary's name
-(wherever that is — the app-grid install in `~/.local/share/Chatterbox/app`,
-or the file you ran from Downloads) and Chatterbox restarts. **Check when
+given its executable bit and put beside the running binary; Chatterbox
+then exits, the new file takes the old one's name (wherever that is — the
+app-grid install in `~/.local/share/Chatterbox/app`, or the file you ran
+from Downloads) and the new version starts. `Chatterbox --update` does
+the same from a terminal, without the restart. **Check when
 Chatterbox starts** (on by default since 1.7.1) tells you at startup when
 a new version exists — it never installs anything by itself; switch it
 off under Settings → Updates if you'd rather check by hand. Your settings, auto-start
@@ -234,7 +236,7 @@ removes the program and the app-grid entry and keeps your data;
 `--uninstall --purge` also removes `~/.local/share/Chatterbox/` and the
 one-line marker in `~/.config/Chatterbox/` that records the app has run
 before. `--help` lists every switch, `--bench` runs the speed check
-from a terminal.
+from a terminal, `--update` installs the latest release from there.
 
 ## Privacy & network
 
@@ -378,6 +380,19 @@ from any machine says what it ran on.
 
 ## What's new
 
+- **1.7.2** — **the binary is never changed under a running process.**
+  A single-file .NET app reads every assembly it has not used yet from
+  its own executable, so renaming or deleting that file while the app
+  runs made the next such load fail: `--uninstall` from the installed
+  copy ended in an "Unhandled exception" after doing its work, and the
+  in-app update swapped the file in before restarting and relied on
+  nothing new being loaded in between. Now the uninstall removes the app
+  folder as its very last act, and the update is swapped in by a small
+  helper only after Chatterbox has exited, which then starts the new
+  version. New `--update` switch (the Updates screen from a terminal);
+  `--uninstall --purge` also removes the host's unpacked native
+  libraries under `~/.net/`; `build.sh` and `tools/smoke.sh` are
+  executable in the checkout.
 - **1.7.1** — **local translation**: Tencent's Hy-MT2 1.8B model through
   llama.cpp, fetched on demand as the model plus a CPU engine pack (four
   instruction-set variants, the best one for your processor is picked),

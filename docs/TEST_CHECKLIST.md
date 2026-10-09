@@ -254,18 +254,30 @@ and `~/.config/Chatterbox` away (restore after this section).
       `SHA-256: <hash of that file>`) — and launch a copy of the app with
       `--update-url http://127.0.0.1:8000/latest.json --data-dir <throwaway>`.
       Check → "Version X.Y.Z is available"; Update now → progress bar,
-      "Installing…", Chatterbox restarts by itself; the new instance toasts
-      "Chatterbox updated from … to X.Y.Z", `last_boot.log` carries the
-      "update:" lines, the file under the old name is executable
-      (`ls -l`) and no `Chatterbox.old` / `Chatterbox.new` is left beside
-      it. Run from the app-grid install AND from a copy in ~/Downloads:
-      each replaces its own path. A wrong SHA-256 in the notes →
-      "SHA-256 mismatch", nothing replaced. Update now while captions run
-      → "Stop captions before updating". From a read-only folder (`/opt`)
-      → "Update failed — could not replace …", the app keeps running.
-- [ ] `Chatterbox --uninstall` removes the app and the grid entry and keeps
-      the data; `--uninstall --purge` removes the data and
-      `~/.config/Chatterbox` too. `Chatterbox --help` lists the switches.
+      "Installing…", Chatterbox exits and comes back by itself (1.7.2: the
+      file is swapped by a helper after the old process is gone, never
+      underneath it); the new instance toasts "Chatterbox updated from …
+      to X.Y.Z", `last_boot.log` carries the "update:" lines, the file
+      under the old name is executable (`ls -l`) and no `Chatterbox.old` /
+      `Chatterbox.new` is left beside it. Run from the app-grid install
+      AND from a copy in ~/Downloads: each replaces its own path. A wrong
+      SHA-256 in the notes → "SHA-256 mismatch", nothing replaced. Update
+      now while captions run → "Stop captions before updating". From a
+      read-only folder (`/opt`) → "Update failed — … is not writable", the
+      app keeps running.
+- [ ] The same from a terminal (1.7.2): `Chatterbox --update --update-url
+      http://127.0.0.1:8000/latest.json --data-dir <throwaway>` prints the
+      download progress and "… takes the place of <path> as soon as this
+      command exits"; a second later `ls -l` shows the new file under the
+      old name and `Chatterbox.old` beside it, and the next start of that
+      file logs "update: updated from … to X.Y.Z" and removes `.old`.
+      Already current → "You have the latest version (…)".
+- [ ] `~/.local/share/Chatterbox/app/Chatterbox --uninstall` — run from
+      the installed copy itself, as the README says — prints its message,
+      exits 0 with no "Unhandled exception" (1.7.1 aborted here), and
+      removes the app folder and the grid entry while keeping the data;
+      `--uninstall --purge` removes the data, `~/.config/Chatterbox` and
+      `~/.net/Chatterbox*` too. `Chatterbox --help` lists the switches.
 
 ---
 Record results here with date + commit.

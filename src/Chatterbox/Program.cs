@@ -63,9 +63,10 @@ internal static class Program
         // Switches that never open a window (LinuxInstaller does the work).
         if (own.Contains("--help") || own.Contains("-h")) { Console.WriteLine(Usage); return 0; }
         if (own.Contains("--install")) return Report(LinuxInstaller.Install());
-        if (own.Contains("--uninstall")) return Report(LinuxInstaller.Uninstall(purge: own.Contains("--purge")));
+        if (own.Contains("--uninstall")) return Uninstall(purge: own.Contains("--purge"));
         if (own.Contains("--bench")) return RunBench(own);
         if (own.Contains("--install-gpu")) return InstallGpu(own);
+        if (own.Contains("--update")) return RunUpdate(own);
         // Started by Steam with its overlay preloaded: run again without it
         // (LinuxHost explains why) and report the child's exit code.
         if (LinuxHost.ReexecWithoutSteamPreload(args) is int reexecCode) return reexecCode;
@@ -302,7 +303,7 @@ internal static class Program
         _window.Load(indexPath);
         _window.WaitForClose();
         _exiting = true;
-        if (_restartWhy != null) LaunchSuccessor(_restartWhy);
+        if (_restartWhy != null) LaunchSuccessor(_restartWhy, ctrl.PendingUpdateSwap);
         // The watcher's poll must not reach a controller that is being
         // disposed (the usings unwind ctrl first).
         watcher.Stop();
@@ -320,6 +321,7 @@ internal static class Program
         "  Chatterbox --uninstall [--purge]   remove that install; --purge also removes settings, models and logs\n" +
         "  Chatterbox --bench                 Settings > Speed check from a terminal: time every installed engine, report on stdout\n" +
         "  Chatterbox --install-gpu           Download GPU acceleration for Whisper (CUDA) from a terminal, progress on stdout\n" +
+        "  Chatterbox --update                Settings > Updates > Update now from a terminal: fetch the latest release, verify it, swap it in when this command exits\n" +
         "  Chatterbox <game command...>       Steam launch-option mode (\"/path/to/Chatterbox %command%\"): start the game, exit with it\n" +
         "  --data-dir <dir>  --vrchat-log-dir <dir>  --assume-vrchat-running   test hooks (tools/smoke.sh)\n" +
         "  --update-url <url>                 test hook: a \"latest release\" JSON document standing in for GitHub's API\n" +
@@ -361,6 +363,65 @@ internal static class Program
     {
         Console.WriteLine(result.Message);
         return result.Ok ? 0 : 1;
+    }
+
+    // "--uninstall": everything but the app folder, then the message,
+    // then the app folder as the very last thing. The running binary
+    // usually lives in that folder (the README says to run the installed
+    // copy), and a single-file app reads the assemblies it has not loaded
+    // yet from its own file — so once the folder is gone, not even
+    // Console.WriteLine is safe (1.7.1 died there with an unhandled
+    // FileNotFoundException after a successful uninstall).
+    private static int Uninstall(bool purge)
+    {
+        var result = LinuxInstaller.Uninstall(purge);
+        Console.WriteLine(result.Message);
+        Console.Out.Flush();
+        if (result.Ok) LinuxInstaller.RemoveAppDir();
+        return result.Ok ? 0 : 1;
+    }
+
+    // "--update": Settings > Updates > Update now from a terminal — the
+    // check, the verified download, and the swap once this command has
+    // exited (AppUpdater.SwapHelper, without a relaunch). --data-dir and
+    // --update-url apply.
+    private static int RunUpdate(string[] args)
+    {
+        if (ArgValue(args, "--data-dir") is { } dataDir) SttPaths.DataDir = Path.GetFullPath(dataDir);
+        if (ArgValue(args, "--update-url") is { } updateUrl) AppUpdater.LatestReleaseUrlOverride = updateUrl;
+        var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+        AppUpdater.SetUserAgent($"Chatterbox/{version}");
+        var exe = _exePath ?? Path.Combine(AppContext.BaseDirectory, AppUpdater.ExeName);
+        var updater = new AppUpdater { ExePath = exe };
+        if (!AppUpdater.IsConfigured) { Console.WriteLine("This build has no update source configured."); return 1; }
+        // The previous run's leftovers, as the window start would clear them.
+        if (updater.FinishPendingUpdate() is { } finished) Console.WriteLine("Previous update: " + finished);
+        Console.WriteLine($"Chatterbox {version} — checking {AppUpdater.DefaultReleaseUrl} ...");
+        var check = updater.CheckAsync().GetAwaiter().GetResult();
+        if (check.Error != null) { Console.WriteLine("Couldn't check for updates — " + check.Error); return 1; }
+        if (check.Update is not { } u)
+        {
+            Console.WriteLine($"You have the latest version ({check.Latest?.ToString(3) ?? version}).");
+            return 0;
+        }
+        Console.WriteLine($"Downloading Chatterbox {u.Version.ToString(3)} ({u.AssetSize / 1_000_000} MB) ...");
+        long lastPct = -1;
+        var (staged, error) = updater.DownloadAsync(u, (received, total) =>
+        {
+            long pct = total > 0 ? received * 100 / total : 0;
+            if (pct / 5 == lastPct / 5 && received != total) return; // every 5 %
+            lastPct = pct;
+            Console.WriteLine($"  {received / 1_000_000} of {total / 1_000_000} MB ({pct}%)");
+        }).GetAwaiter().GetResult();
+        if (staged == null) { Console.WriteLine("Update failed — " + error); return 1; }
+        if (updater.PrepareSwap(staged, u.Version) is { } prepareError) { Console.WriteLine("Update failed — " + prepareError); return 1; }
+        if (AppUpdater.StartSwapHelper(exe, relaunch: false, Array.Empty<string>()) is { } helperError)
+        {
+            Console.WriteLine($"Update failed — couldn't start the swap helper ({helperError}); the verified file is at {staged}");
+            return 1;
+        }
+        Console.WriteLine($"Chatterbox {u.Version.ToString(3)} is verified and takes the place of {exe} as soon as this command exits.");
+        return 0;
     }
 
     // "--bench": the Settings > Speed check without a window — the same
@@ -494,25 +555,38 @@ internal static class Program
         _ = Task.Run(() => { try { _window.Invoke(() => _window.Close()); } catch { } });
     }
 
-    // Starts the next instance from the path this one was started from —
-    // after an update, the new binary under the same name — which waits
-    // for this process (--after) before taking the instance lock. Only
-    // our own switches are carried over: in Steam wrapper mode the game's
-    // command line was never ours, and the restarted app must not launch
-    // the game again.
-    private static void LaunchSuccessor(string why)
+    // Starts the next instance from the path this one was started from,
+    // which waits for this process (--after) before taking the instance
+    // lock. After an update the staged binary is swapped in first — by
+    // the helper, once this process is gone (AppUpdater explains why not
+    // here) — and the helper starts the new version under the same name.
+    // Only our own switches are carried over: in Steam wrapper mode the
+    // game's command line was never ours, and the restarted app must not
+    // launch the game again.
+    private static void LaunchSuccessor(string why, string? pendingSwap)
     {
         try
         {
             var exe = _exePath ?? throw new InvalidOperationException("no process path");
+            var args = ForwardedArgs(_ownArgs).Concat(new[] { "--after", Environment.ProcessId.ToString() }).ToList();
+            if (pendingSwap != null)
+            {
+                if (AppUpdater.StartSwapHelper(exe, relaunch: true, args) is { } helperError)
+                {
+                    // Without the helper the old version comes back; the
+                    // next start clears the staged file and the marker
+                    // explains that the swap did not happen.
+                    BootLog.Append($"update: the swap helper could not be started ({helperError}); restarting without the update");
+                    ErrorLog.WriteNote("RestartApp", "swap helper failed to start: " + helperError);
+                }
+                else return;
+            }
             var psi = new ProcessStartInfo(exe)
             {
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(exe) ?? "",
             };
-            foreach (var a in ForwardedArgs(_ownArgs)) psi.ArgumentList.Add(a);
-            psi.ArgumentList.Add("--after");
-            psi.ArgumentList.Add(Environment.ProcessId.ToString());
+            foreach (var a in args) psi.ArgumentList.Add(a);
             Process.Start(psi)?.Dispose();
         }
         catch (Exception ex)
