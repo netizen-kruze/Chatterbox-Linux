@@ -159,6 +159,10 @@ public class SttSettings
         foreach (var f in AutoStartFriends)
             if (!disk.AutoStartFriends.Any(d => d.Id == f.Id && d.Name == f.Name))
             { disk.AutoStartFriends.Add(f); changed = true; }
+        if (CheckUpdatesAtStartup != pristine.CheckUpdatesAtStartup) { disk.CheckUpdatesAtStartup = CheckUpdatesAtStartup; changed = true; }
+        if (TranslateEnabled != pristine.TranslateEnabled) { disk.TranslateEnabled = TranslateEnabled; changed = true; }
+        if (TranslateTarget != pristine.TranslateTarget) { disk.TranslateTarget = TranslateTarget; changed = true; }
+        if (TranslateShowOriginal != pristine.TranslateShowOriginal) { disk.TranslateShowOriginal = TranslateShowOriginal; changed = true; }
 
         CopyFrom(disk);
         ProvisionalDefaults = false;
@@ -183,6 +187,8 @@ public class SttSettings
         Save();
     }
 
+    // Every persisted property — a new setting must be added here AND to
+    // the merge above, or a provisional boot silently drops it.
     private void CopyFrom(SttSettings o)
     {
         InputDeviceIndex = o.InputDeviceIndex; InputDeviceName = o.InputDeviceName;
@@ -190,6 +196,9 @@ public class SttSettings
         TypingIndicator = o.TypingIndicator; NameBoost = o.NameBoost;
         NewLineGapMs = o.NewLineGapMs; ClearGapMs = o.ClearGapMs;
         AutoStartEnabled = o.AutoStartEnabled; AutoStartFriends = o.AutoStartFriends;
+        CheckUpdatesAtStartup = o.CheckUpdatesAtStartup;
+        TranslateEnabled = o.TranslateEnabled; TranslateTarget = o.TranslateTarget;
+        TranslateShowOriginal = o.TranslateShowOriginal;
     }
 
     internal static void ResetForTests()

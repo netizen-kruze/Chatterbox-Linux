@@ -80,11 +80,10 @@ public static class SttPaths
         set => _modelDir = value;
     }
 
-    // Where runtimes/ lives — the bundled whisper natives, the CUDA pack and
-    // the Parakeet engine pack: beside the executable when that folder is
-    // writable (a folder in the home directory, the usual case), else the
-    // data folder (an install under /opt or /usr). Whisper.net probes
-    // <root>/runtimes/<rid> (Program points it at a non-default root).
+    // Where runtimes/ lives — the bundled whisper natives, the CUDA pack,
+    // the Parakeet engine pack and the translation packs: the data folder,
+    // always (see ChooseRuntimeRoot). Whisper.net probes <root>/runtimes/<rid>
+    // (Program points it at this root).
     private static string? _runtimeRoot;
     public static string RuntimeRoot
     {

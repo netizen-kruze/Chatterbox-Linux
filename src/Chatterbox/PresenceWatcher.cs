@@ -118,8 +118,10 @@ public sealed class PresenceWatcher : IDisposable
         // Boot catch-up: absorb the whole current file so the roster and
         // world reflect an in-progress session, but raise nothing — the
         // caller reconciles from GetCurrentPlayers() instead of replaying
-        // hours of history as live events.
-        Drain(live: false);
+        // hours of history as live events. A log that cannot be read is a
+        // Players-screen problem, never a failed start.
+        try { Drain(live: false); }
+        catch (Exception ex) { Say($"catch-up error: {ex.Message}"); }
         Say($"catch-up: {PlayerCount} player(s), world {CurrentWorldId ?? "none"}, file {Path.GetFileName(_logPath ?? "none")}");
 
         // A log alone can describe a session that already ended.
@@ -131,7 +133,20 @@ public sealed class PresenceWatcher : IDisposable
             _timer = new System.Threading.Timer(_ => PollOnce(), null, 1000, 1000);
     }
 
-    public void Stop() { _timer?.Dispose(); _timer = null; }
+    // Waits for a poll that is in flight (bounded), so no event reaches an
+    // owner that is being disposed right after this returns.
+    public void Stop()
+    {
+        var t = _timer;
+        _timer = null;
+        if (t == null) return;
+        try
+        {
+            using var done = new ManualResetEvent(false);
+            if (t.Dispose(done)) done.WaitOne(3000);
+        }
+        catch { t.Dispose(); }
+    }
     public void Dispose() { _disposed = true; Stop(); }
 
     internal void PollOnce()
@@ -196,7 +211,14 @@ public sealed class PresenceWatcher : IDisposable
                 ConsumeBytes(block, got, live);
             }
         }
-        catch (IOException) { return; }
+        // Mid-write, rotated away, or not readable by this user (a log dir
+        // the user pointed at by hand): the next poll tries again, and the
+        // reason is said once rather than every second.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (ex is not IOException) SayOnce($"cannot read {Path.GetFileName(_logPath)}: {ex.Message}");
+            return;
+        }
     }
 
     // Complete lines go to the classifier; a trailing partial line waits
@@ -488,4 +510,14 @@ public sealed class PresenceWatcher : IDisposable
 
     private void ClearRoster() { lock (_gate) _roster.Clear(); }
     private void Say(string msg) => DebugLog?.Invoke("PresenceWatcher: " + msg);
+
+    // For a condition that repeats every poll: said when it changes, not
+    // once a second.
+    private string? _lastSaidOnce;
+    private void SayOnce(string msg)
+    {
+        if (msg == _lastSaidOnce) return;
+        _lastSaidOnce = msg;
+        Say(msg);
+    }
 }

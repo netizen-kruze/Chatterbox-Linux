@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Chatterbox;
 using Chatterbox.Stt;
 using Xunit;
@@ -144,23 +145,55 @@ public class StabilityTests
         Assert.True(engine.MaxLengthMs <= 2000, $"a pass covered {engine.MaxLengthMs} ms");
     }
 
+    // Speech on the first look, silence from then on: the utterance closes
+    // on the second tick, over whatever the window holds by then.
+    private sealed class SpeechThenSilence : IVadSegmenter
+    {
+        private int _calls;
+        public IReadOnlyList<SpeechSegment> Detect(byte[] pcm, int length)
+        {
+            int ms = length / SttAudio.MsToBytes(1);
+            return _calls++ == 0 && ms > 0 ? new[] { new SpeechSegment(TimeSpan.Zero, TimeSpan.FromMilliseconds(ms)) } : Array.Empty<SpeechSegment>();
+        }
+    }
+
     [Fact]
-    public async Task TheStopFlushNeverHandsTheEngineMoreThanOnePass()
+    public async Task AnUtteranceClosingPassNeverHandsTheEngineMoreThanOneWindow()
     {
         var engine = new CountingEngine();
-        using var pipeline = new SttPipeline(engine, new AlwaysSpeech())
+        using var pipeline = new SttPipeline(engine, new SpeechThenSilence())
         {
             MaxUtteranceSeconds = 2,
             MaxLagMs = 100_000,   // no shedding here: the cap alone must hold
             VadTickMs = 300,
+            MinInferIntervalMs = 100_000,   // no partial passes: the closing pass is the one measured
         };
         pipeline.Start();
-        for (int i = 0; i < 40; i++) pipeline.Push(Chunk());
-        await Task.Delay(300);
+        for (int i = 0; i < 5; i++) pipeline.Push(Chunk());      // 0.5 s: speech seen, window open
+        await Task.Delay(400);
+        for (int i = 0; i < 35; i++) pipeline.Push(Chunk());     // 3.5 s more arrive at once: the window is 4 s when silence closes it
+        for (int i = 0; i < 40 && engine.Calls == 0; i++) await Task.Delay(50);
         pipeline.Stop();
-        Assert.True(engine.Calls > 0);
+        Assert.True(engine.Calls > 0, "the closing pass never ran");
         Assert.True(engine.MaxLengthMs <= 2000, $"a pass covered {engine.MaxLengthMs} ms");
         Assert.False(pipeline.IsRunning);
+    }
+
+    [Fact]
+    public async Task StopDoesNotTranscribeWhatIsLeftInTheWindow()
+    {
+        // The flushed text would only reach the chatbox relay, which the
+        // owner clears right after Stop — so Stop must not spend seconds on
+        // a pass nobody sees.
+        var engine = new CountingEngine();
+        using var pipeline = new SttPipeline(engine, new AlwaysSpeech()) { VadTickMs = 300, MinInferIntervalMs = 100_000 };
+        pipeline.Start();
+        for (int i = 0; i < 5; i++) pipeline.Push(Chunk());
+        await Task.Delay(400);                                   // a tick: speech active, no partial pass (interval gate)
+        var sw = Stopwatch.StartNew();
+        Assert.True(pipeline.Stop());
+        Assert.Equal(0, engine.Calls);
+        Assert.True(sw.ElapsedMilliseconds < 2000, $"Stop took {sw.ElapsedMilliseconds} ms");
     }
 
     [Fact]
@@ -175,6 +208,33 @@ public class StabilityTests
         Assert.Single(failures);
         Assert.False(pipeline.IsRunning);
         pipeline.Stop();
+    }
+
+    [Fact]
+    public async Task AWorkerFailureHandlerMayStopThePipelineAtOnce()
+    {
+        // The owner's handler calls Stop() (the controller does): it must
+        // return at once, not time out waiting for the worker it was called
+        // from, and never log the "did not exit in time" note.
+        using var pipeline = new SttPipeline(new ThrowingEngine(), new AlwaysSpeech()) { VadTickMs = 300, MinInferIntervalMs = 100 };
+        var logs = new List<string>();
+        pipeline.OnLog += l => { lock (logs) logs.Add(l); };
+        long stopMs = -1; bool exited = false;
+        var done = new TaskCompletionSource();
+        pipeline.OnWorkerFailed += _ =>
+        {
+            var sw = Stopwatch.StartNew();
+            exited = pipeline.Stop();
+            stopMs = sw.ElapsedMilliseconds;
+            done.TrySetResult();
+        };
+        pipeline.Start();
+        for (int i = 0; i < 10; i++) pipeline.Push(Chunk());
+        Assert.True(await Task.WhenAny(done.Task, Task.Delay(5000)) == done.Task, "the failure was never reported");
+        Assert.True(exited, "Stop reported the worker still running");
+        Assert.True(stopMs < 2000, $"Stop took {stopMs} ms");
+        lock (logs) Assert.DoesNotContain(logs, l => l.Contains("did not exit"));
+        Assert.False(pipeline.IsRunning);
     }
 
     private sealed class ThrowingEngine : ISttEngine

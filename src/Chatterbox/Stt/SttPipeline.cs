@@ -191,17 +191,23 @@ public sealed class SttPipeline : IDisposable
                     await TickAsync(ct);
                 }
             }
-
-            // Channel completed (Stop): flush whatever speech is still buffered.
-            if (_speechActive && _windowBytes > 0)
-                await FinalizeUtteranceAsync(_windowBytes, _windowBytes, ct);
+            // Channel completed — that is Stop: whatever speech is still in
+            // the window is NOT transcribed. Its text would only reach the
+            // chatbox relay, which the owner clears right after Stop
+            // returns, so the pass was seconds of pure wait (and the usual
+            // reason an engine had to be freed late).
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             OnLog?.Invoke($"STT pipeline error: {ex.Message}");
             ErrorLog.WriteEntry("SttPipeline.WorkerLoop", ex);
-            if (!_stopRequested) OnWorkerFailed?.Invoke(ex);
+            // Raised off this task: the owner's handler calls Stop(), which
+            // joins the worker — from inside the worker that wait could
+            // only time out (15 s with the session lock held, and a false
+            // "did not exit in time" in error.log).
+            if (!_stopRequested && OnWorkerFailed is { } failed)
+                _ = Task.Run(() => failed(ex));
         }
     }
 

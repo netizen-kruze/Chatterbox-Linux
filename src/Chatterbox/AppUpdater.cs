@@ -87,7 +87,11 @@ public sealed class AppUpdater
             ? new Version(v.Major, v.Minor, Math.Max(v.Build, 0))
             : new Version(0, 0, 0);
 
-    private static readonly HttpClient Shared = new() { Timeout = Timeout.InfiniteTimeSpan };
+    // No overall timeout (a slow download is fine) but a bounded connect:
+    // a black-holed host must fail within half a minute, not sit at 0 %
+    // for the kernel's SYN timeout, like every model download client.
+    private static readonly HttpClient Shared =
+        new(new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(30) }) { Timeout = Timeout.InfiniteTimeSpan };
 
     // Identifies the app to GitHub by name and version (a User-Agent is
     // required by its API) — see SttModelManager.SetUserAgent.

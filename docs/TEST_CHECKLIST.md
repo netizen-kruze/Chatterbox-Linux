@@ -215,12 +215,12 @@ and `~/.config/Chatterbox` away (restore after this section).
       …", the app grid shows Chatterbox with its icon, and launching from
       there runs `~/.local/share/Chatterbox/app/Chatterbox`. The same from
       a terminal: `./Chatterbox-<version>-linux-x64 --install`.
-- [ ] First launch creates `runtimes/linux-x64/` beside the binary (the
-      bundled whisper/VAD natives, written at boot); pressing Start then
-      actually produces captions — this is the single-file native-loading
-      regression test. Launched from a read-only folder (`/opt`), the
-      natives land in `~/.local/share/Chatterbox/runtimes/` instead and
-      Start still works (boot log's "runtimes:" line).
+- [ ] First launch creates `~/.local/share/Chatterbox/runtimes/linux-x64/`
+      (the bundled whisper/VAD natives, written at boot — never beside the
+      binary); pressing Start then actually produces captions — this is
+      the single-file native-loading regression test. Launched from a
+      read-only folder (`/opt`) it is exactly the same (boot log's
+      "runtimes:" line names the data folder).
 - [ ] No VRChat running → Players shows "VRChat is not running"; app is
       otherwise fine.
 - [ ] VRChat running with its Settings → Debug → Logging off → about 30 s

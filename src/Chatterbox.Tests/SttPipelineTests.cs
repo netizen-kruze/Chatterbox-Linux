@@ -63,11 +63,26 @@ public class SttPipelineTests
         return chunk;
     }
 
+    // Speech until told otherwise, then silence: the utterance closes the
+    // way a real pause closes it (Stop no longer transcribes what is left).
+    private sealed class SpeechUntilSilenced : IVadSegmenter
+    {
+        public volatile bool Silent;
+        public IReadOnlyList<SpeechSegment> Detect(byte[] pcm, int length)
+        {
+            int ms = length / SttAudio.MsToBytes(1);
+            return Silent || ms == 0
+                ? Array.Empty<SpeechSegment>()
+                : new[] { new SpeechSegment(TimeSpan.Zero, TimeSpan.FromMilliseconds(ms)) };
+        }
+    }
+
     [Fact]
     public async Task LongSpeechIsTrimmedAndEveryWordArrivesExactlyOnce()
     {
         var engine = new ScriptedEngine();
-        using var pipeline = new SttPipeline(engine, new AlwaysSpeech())
+        var vad = new SpeechUntilSilenced();
+        using var pipeline = new SttPipeline(engine, vad)
         {
             TrimAfterMs = 4000,
             KeepTailMs = 1500,
@@ -88,7 +103,13 @@ public class SttPipelineTests
             if (i % 3 == 2) await Task.Delay(1);   // arrives roughly in real-time order
         }
         await Task.Delay(100);
-        pipeline.Stop();   // flushes the open utterance as a final
+        // The speaker stops: a tick's worth of silence closes the utterance
+        // (its 300 ms completes no further word), and the tail arrives as
+        // the final.
+        vad.Silent = true;
+        for (int i = chunks; i < chunks + 3; i++) pipeline.Push(Chunk(i));
+        for (int i = 0; i < 100 && finals.Count == 0; i++) await Task.Delay(50);
+        pipeline.Stop();
 
         Assert.NotEmpty(trims);
         Assert.All(trims, t => Assert.True(t.after >= 1500, $"window after trim {t.after} ms"));

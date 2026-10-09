@@ -68,9 +68,10 @@ About**.
    copies Chatterbox to `~/.local/share/Chatterbox/app/`, adds it to your
    app grid and shows the line for VRChat's Steam launch options. No root
    needed. You can also skip this and keep running the download where it
-   is: on first launch the app unpacks its bundled speech components
-   (~2.5 MB) into a `runtimes/` folder beside itself, or into
-   `~/.local/share/Chatterbox` when its own folder is read-only.
+   is — the binary's own folder is never written to: on first launch the
+   app unpacks its bundled speech components (~2.5 MB) into
+   `~/.local/share/Chatterbox/runtimes/`, where the optional packs land
+   too, so it runs the same from `/opt`, a USB stick or Downloads.
 3. In VRChat: **Action Menu → Options → OSC → Enabled**.
 4. On first launch, pick a model: **Quick start** (~33 MB) or **Best
    quality** (recommended, ~670 MB — ~810 MB on NVIDIA machines, where it

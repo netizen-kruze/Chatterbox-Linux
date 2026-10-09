@@ -8,8 +8,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const DEMO = location.search.includes('demo');
 
 function send(obj) {
-  if (DEMO) return;
-  try { window.external.sendMessage(JSON.stringify(obj)); } catch (e) { /* host not ready */ }
+  if (DEMO) return true;
+  try { window.external.sendMessage(JSON.stringify(obj)); return true; } catch (e) { return false; /* host not ready */ }
 }
 
 // ── view switching ─────────────────────────────────────────────
@@ -113,11 +113,19 @@ function setPace(p) {
 }
 $('btnStartStop').addEventListener('click', () => {
   if (running) { send({ action: 'sttStop' }); }
-  else { resetStage(); send({ action: 'sttStart', deviceIndex: parseInt($('selDevice').value ?? '0', 10) }); }
+  else { resetStage(); send({ action: 'sttStart', deviceIndex: parseInt($('selDevice').value ?? '0', 10), deviceName: chosenDeviceName() }); }
 });
 
 // ── devices / settings payload ─────────────────────────────────
 let dev = null; // last sttDevices payload
+// The name shown for the chosen microphone ('' for the system default):
+// sent with the index so a list that went stale cannot pick another
+// device (the host resolves by name).
+function chosenDeviceName() {
+  const sel = $('selDevice');
+  return parseInt(sel.value ?? '0', 10) > 0 ? (sel.selectedOptions[0]?.textContent ?? '') : '';
+}
+
 function renderDevices(p) {
   dev = p;
   // The voice detector is not a first-run matter: the backend fetches it on
@@ -503,7 +511,7 @@ $('btnTransModels').addEventListener('click', () => showView('models'));
 $('selWhisperModel').addEventListener('change', () =>
   send({ action: 'sttConfig', whisperModel: $('selWhisperModel').value }));
 $('selDevice').addEventListener('change', () =>
-  send({ action: 'sttSetInputDevice', deviceIndex: parseInt($('selDevice').value, 10) }));
+  send({ action: 'sttSetInputDevice', deviceIndex: parseInt($('selDevice').value, 10), deviceName: chosenDeviceName() }));
 $('selRate').addEventListener('change', () =>
   send({ action: 'sttConfig', intervalMs: parseInt($('selRate').value, 10) }));
 
@@ -582,15 +590,22 @@ function hookBridge() {
   } catch (e) { /* not ready yet */ }
   return bridgeHooked;
 }
+let pingStarted = false, docsRequested = false;
 function requestState(attempt) {
   if (DEMO || stateReceived) return;
-  hookBridge();
+  const hooked = hookBridge();
   send({ action: 'sttGetState' });
-  // Heartbeat: a web process that crashed stops sending these, and the
-  // host reloads the page (Program.cs) instead of leaving a dead window
-  // over running captions.
-  setInterval(() => send({ action: 'sttPing' }), 5000);
-  send({ action: 'sttGetDocs' });
+  if (hooked) {
+    // Heartbeat: a web process that crashed stops sending these, and the
+    // host reloads the page (Program.cs) instead of leaving a dead window
+    // over running captions. One interval, however many retries it took.
+    if (!pingStarted && send({ action: 'sttPing' })) {
+      pingStarted = true;
+      setInterval(() => send({ action: 'sttPing' }), 5000);
+    }
+    // The docs payload is tens of KB: asked for once the bridge can answer.
+    if (!docsRequested) docsRequested = send({ action: 'sttGetDocs' });
+  }
   if (attempt < 40) setTimeout(() => requestState(attempt + 1), attempt < 10 ? 300 : 1000);
 }
 

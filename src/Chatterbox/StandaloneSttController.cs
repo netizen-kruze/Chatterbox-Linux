@@ -18,8 +18,38 @@ public sealed class StandaloneSttController : IDisposable
 
     private SttService? _service;
     private SttChatboxRelay? _relay;
+    // The one download slot the Models screen shows (progress bar, Cancel).
+    // Claimed and released under a lock: the boot-time voice-detector
+    // fetch runs on a pool thread while the page's downloads run on the
+    // window thread, and a finishing download must only free its own slot.
+    private readonly object _downloadGate = new();
     private CancellationTokenSource? _downloadCts;
     private string? _downloadingId;
+
+    private bool TryClaimDownload(string id, out CancellationToken ct)
+    {
+        lock (_downloadGate)
+        {
+            if (_downloadingId != null) { ct = CancellationToken.None; return false; }
+            _downloadingId = id;
+            _downloadCts = new CancellationTokenSource();
+            ct = _downloadCts.Token;
+            return true;
+        }
+    }
+
+    private void ReleaseDownload(string id)
+    {
+        CancellationTokenSource? cts;
+        lock (_downloadGate)
+        {
+            if (_downloadingId != id) return;   // not ours any more
+            _downloadingId = null;
+            cts = _downloadCts;
+            _downloadCts = null;
+        }
+        cts?.Dispose();
+    }
     private long _lastProgressSentAt;
     private bool _autoStarted;
     private bool _manualHold;
@@ -88,23 +118,28 @@ public sealed class StandaloneSttController : IDisposable
     // the file is genuinely gone.
     private void ProvisionalRecheckTick()
     {
-        bool recovered = false, gaveUp = false;
-        lock (_sessionLock)
-        lock (_settingsLock)
+        // A timer callback: an exception here is a process crash.
+        try
         {
-            if (_settings.TryRecoverFromDisk()) recovered = true;
-            else if (Environment.TickCount64 - _provisionalSince > ProvisionalGiveUpMs)
+            bool recovered = false, gaveUp = false;
+            lock (_sessionLock)
+            lock (_settingsLock)
             {
-                _settings.GiveUpProvisional();
-                gaveUp = true;
+                if (_settings.TryRecoverFromDisk()) recovered = true;
+                else if (Environment.TickCount64 - _provisionalSince > ProvisionalGiveUpMs)
+                {
+                    _settings.GiveUpProvisional();
+                    gaveUp = true;
+                }
             }
+            if (recovered || gaveUp)
+            {
+                _provisionalRecheck?.Dispose();
+                _provisionalRecheck = null;
+            }
+            if (gaveUp) BootLog.Append("settings: file never became visible; running on defaults");
         }
-        if (recovered || gaveUp)
-        {
-            _provisionalRecheck?.Dispose();
-            _provisionalRecheck = null;
-        }
-        if (gaveUp) BootLog.Append("settings: file never became visible; running on defaults");
+        catch (Exception ex) { ErrorLog.WriteEntry("ProvisionalRecheck", ex); }
     }
 
     private void SendSavedToast()
@@ -270,21 +305,10 @@ public sealed class StandaloneSttController : IDisposable
         // Shown on the Models screen like any download (progress, Cancel)
         // when the slot is free; a download the user already has running
         // keeps the slot and this one runs quietly beside it.
-        CancellationTokenSource? cts = null;
-        if (_downloadingId == null)
-        {
-            cts = new CancellationTokenSource();
-            _downloadingId = vad.Id;
-            _downloadCts = cts;
-            SendModels();
-        }
-        var (ok, error) = await _models.DownloadAsync(vad.Id, cts?.Token ?? CancellationToken.None);
-        if (cts != null)
-        {
-            _downloadingId = null;
-            _downloadCts = null;
-            cts.Dispose();
-        }
+        bool slot = TryClaimDownload(vad.Id, out var ct);
+        if (slot) SendModels();
+        var (ok, error) = await _models.DownloadAsync(vad.Id, ct);
+        if (slot) ReleaseDownload(vad.Id);
         if (ok)
         {
             var removed = _models.RemoveStaleVadFiles();
@@ -317,6 +341,7 @@ public sealed class StandaloneSttController : IDisposable
     private const int StartupUpdateCheckDelayMs = 6000;
     // ── translation (LlamaTranslator): loaded at Start when enabled, freed at Stop ──
     private LlamaTranslator? _translator;
+    private bool _translateMissingToasted;   // the "not installed" toast, once per session
 
     private void SendUpdateState(string state, string? error = null, long received = 0, long total = 0)
     {
@@ -460,8 +485,14 @@ public sealed class StandaloneSttController : IDisposable
         if (!TranslateReady(_models))
         {
             relay.Translator = null;
-            _send("toast", new { ok = false, msg = "Translation is on, but the translation model and engine pack are not installed — captions run untranslated",
-                                 action = new { label = "Open Models", view = "models" } });
+            // Once per session, not on every settings change while it stays
+            // uninstalled.
+            if (!_translateMissingToasted)
+            {
+                _translateMissingToasted = true;
+                _send("toast", new { ok = false, msg = "Translation is on, but the translation model and engine pack are not installed — captions run untranslated",
+                                     action = new { label = "Open Models", view = "models" } });
+            }
             return;
         }
         bool gpu = SttTranslatePacks.Gpu.IsInstalled();
@@ -495,6 +526,14 @@ public sealed class StandaloneSttController : IDisposable
     // Session work requested from the UI thread runs here: an engine load
     // takes seconds and would freeze the window (and Photino's message
     // loop) otherwise. Failures land in error.log, never on the UI thread.
+    // The device the user chose, by NAME: the page sends the name it shows
+    // for the index, so a list that went stale (a USB microphone unplugged
+    // since the page last asked) cannot make the index land on a different
+    // device — the name is re-resolved at Start, and an unknown one falls
+    // back to the system default. Index 0 is always the default input.
+    private static string ChosenDeviceName(int index, string? pageName) =>
+        index <= 0 ? "" : (!string.IsNullOrWhiteSpace(pageName) ? pageName : SttAudioDevices.InputNameAt(index));
+
     private static void RunOffUiThread(Action work) =>
         Task.Run(() =>
         {
@@ -701,7 +740,9 @@ public sealed class StandaloneSttController : IDisposable
             // Settings > About: the license documents live inside the
             // assembly (docs/*), not as loose files beside the exe.
             case "sttGetDocs":
-                _send("sttDocs", new
+                // Off the window thread: the machine profile runs tools
+                // (nvidia-smi, lspci) that can take seconds the first time.
+                RunOffUiThread(() => _send("sttDocs", new
                 {
                     version = typeof(StandaloneSttController).Assembly.GetName().Version?.ToString(3),
                     readme = ReadEmbeddedDoc("docs/README.md"),
@@ -709,7 +750,7 @@ public sealed class StandaloneSttController : IDisposable
                     notice = ReadEmbeddedDoc("docs/NOTICE.txt"),
                     machine = MachineProfile.Describe(),
                     installedAt = LinuxInstaller.InstalledAt(),
-                });
+                }));
                 break;
 
             // The page's heartbeat (every few seconds): nothing to do here,
@@ -773,7 +814,7 @@ public sealed class StandaloneSttController : IDisposable
                         lock (_settingsLock)
                         {
                             _settings.InputDeviceIndex = devIdx;
-                            _settings.InputDeviceName = SttAudioDevices.InputNameAt(devIdx);
+                            _settings.InputDeviceName = ChosenDeviceName(devIdx, msg["deviceName"]?.ToString());
                             _settings.Engine = engineKind;
                             _settings.Save();
                         }
@@ -962,15 +1003,18 @@ public sealed class StandaloneSttController : IDisposable
             case "sttSetInputDevice":
                 {
                     int devIdx = msg["deviceIndex"]?.Value<int?>() ?? 0;
-                    lock (_settingsLock)
-                    {
-                        _settings.InputDeviceIndex = devIdx;
-                        _settings.InputDeviceName = SttAudioDevices.InputNameAt(devIdx);
-                        _settings.Save();
-                    }
-                    SendSavedToast();
+                    var devName = msg["deviceName"]?.ToString();
+                    // Off the window thread: resolving a device name may run
+                    // pw-dump (seconds when the device list is stale).
                     RunOffUiThread(() =>
                     {
+                        lock (_settingsLock)
+                        {
+                            _settings.InputDeviceIndex = devIdx;
+                            _settings.InputDeviceName = ChosenDeviceName(devIdx, devName);
+                            _settings.Save();
+                        }
+                        SendSavedToast();
                         lock (_sessionLock)
                         {
                             if (IsRunning)
@@ -1081,7 +1125,20 @@ public sealed class StandaloneSttController : IDisposable
             case "sttDownloadModel":
                 {
                     var id = msg["id"]?.ToString() ?? "";
-                    if (_downloadingId != null)
+                    if (id.Length == 0) break;
+                    // The voice detector takes the shared path: the boot
+                    // check may already be fetching it, and the same file
+                    // must never download twice at once.
+                    if (id == SttModelCatalog.VadId)
+                    {
+                        _ = EnsureVadAsync();
+                        SendModels();
+                        break;
+                    }
+                    var info = SttModelCatalog.Find(id);
+                    var pack = SttTranslatePacks.Find(id);
+                    if (id != SttEnginePack.Id && id != SttGpuPack.Id && pack == null && info == null) break;
+                    if (!TryClaimDownload(id, out var dlCt))
                     {
                         _send("toast", new { ok = false, msg = "A model download is already running" });
                         break;
@@ -1089,9 +1146,7 @@ public sealed class StandaloneSttController : IDisposable
 
                     if (id == SttEnginePack.Id)
                     {
-                        _downloadingId = id;
-                        _downloadCts = new CancellationTokenSource();
-                        var engCt = _downloadCts.Token;
+                        var engCt = dlCt;
                         SendModels();
                         _ = Task.Run(async () =>
                         {
@@ -1102,9 +1157,7 @@ public sealed class StandaloneSttController : IDisposable
                                 _lastProgressSentAt = now;
                                 _send("sttModelProgress", new { id, received, total });
                             }, engCt);
-                            _downloadingId = null;
-                            _downloadCts?.Dispose();
-                            _downloadCts = null;
+                            ReleaseDownload(id);
                             _send("toast", ok
                                 ? new { ok = true, msg = "Parakeet engine installed" }
                                 : new { ok = false, msg = error ?? "download failed" });
@@ -1116,9 +1169,7 @@ public sealed class StandaloneSttController : IDisposable
 
                     if (id == SttGpuPack.Id)
                     {
-                        _downloadingId = id;
-                        _downloadCts = new CancellationTokenSource();
-                        var gpuCt = _downloadCts.Token;
+                        var gpuCt = dlCt;
                         SendModels();
                         _ = Task.Run(async () =>
                         {
@@ -1129,9 +1180,7 @@ public sealed class StandaloneSttController : IDisposable
                                 _lastProgressSentAt = now;
                                 _send("sttModelProgress", new { id, received, total });
                             }, gpuCt);
-                            _downloadingId = null;
-                            _downloadCts?.Dispose();
-                            _downloadCts = null;
+                            ReleaseDownload(id);
                             _send("toast", ok
                                 ? new { ok = SttGpuPack.CudaRuntimePresent(), msg = "GPU acceleration installed — restart Chatterbox to activate it" + SttGpuPack.RuntimeNote() }
                                 : new { ok = false, msg = error ?? "download failed" });
@@ -1140,11 +1189,9 @@ public sealed class StandaloneSttController : IDisposable
                         break;
                     }
 
-                    if (SttTranslatePacks.Find(id) is { } pack)
+                    if (pack != null)
                     {
-                        _downloadingId = id;
-                        _downloadCts = new CancellationTokenSource();
-                        var packCt = _downloadCts.Token;
+                        var packCt = dlCt;
                         SendModels();
                         _ = Task.Run(async () =>
                         {
@@ -1155,9 +1202,7 @@ public sealed class StandaloneSttController : IDisposable
                                 _lastProgressSentAt = now;
                                 _send("sttModelProgress", new { id, received, total });
                             }, packCt);
-                            _downloadingId = null;
-                            _downloadCts?.Dispose();
-                            _downloadCts = null;
+                            ReleaseDownload(id);
                             _send("toast", ok
                                 ? new { ok = true, msg = $"{pack.DisplayName} installed" }
                                 : new { ok = false, msg = error ?? "download failed" });
@@ -1167,31 +1212,14 @@ public sealed class StandaloneSttController : IDisposable
                         break;
                     }
 
-                    var info = SttModelCatalog.Find(id);
-                    if (info == null) break;
-
-                    // The voice detector takes the shared path: the boot
-                    // check may already be fetching it, and the same file
-                    // must never download twice at once.
-                    if (id == SttModelCatalog.VadId)
-                    {
-                        _ = EnsureVadAsync();
-                        SendModels();
-                        break;
-                    }
-
-                    _downloadingId = id;
-                    _downloadCts = new CancellationTokenSource();
-                    var ct = _downloadCts.Token;
+                    var ct = dlCt;
                     SendModels();
                     _ = Task.Run(async () =>
                     {
                         var (ok, error) = await _models.DownloadAsync(id, ct);
-                        _downloadingId = null;
-                        _downloadCts?.Dispose();
-                        _downloadCts = null;
+                        ReleaseDownload(id);
                         _send("toast", ok
-                            ? new { ok = true, msg = $"{info.DisplayName} downloaded and verified" }
+                            ? new { ok = true, msg = $"{info!.DisplayName} downloaded and verified" }
                             : new { ok = false, msg = error ?? "download failed" });
                         SendModels();
                         SendDevices();
@@ -1345,6 +1373,7 @@ public sealed class StandaloneSttController : IDisposable
         };
         _relay.OnLog += RouteSttLog;
         _relay.OnTextSent += text => _send("sttSent", new { text });
+        _translateMissingToasted = false;
         AttachTranslator();
         _relay.Start();
 
@@ -1411,9 +1440,13 @@ public sealed class StandaloneSttController : IDisposable
             if (_service != null)
                 BootLog.Append($"captions session ended after {(Environment.TickCount64 - _sessionStartedAt) / 60000.0:0.0} min — " +
                                $"{_pace.Summary()} — {_service.EngineName}; {MemoryLine()}");
-            _service?.Stop();
+            // The chatbox is cleared FIRST: stopping the service can wait
+            // on a recognition pass in flight (seconds on a slow CPU), and
+            // a SIGTERM's hard-exit backstop must not fire before the
+            // in-game text and the typing indicator are gone.
             _relay?.Dispose();
             _relay = null;
+            _service?.Stop();
             _translator?.Dispose();   // 1 GB of weights: not kept between sessions
             _translator = null;
             _service?.Dispose();
@@ -1520,12 +1553,16 @@ public sealed class StandaloneSttController : IDisposable
 
     private void MeterTick()
     {
-        var svc = _service; // snapshot — Stop() nulls the field from other threads
-        if (svc is not { IsRunning: true }) return;
-        int pct = (int)MathF.Round(Math.Clamp(svc.MeterLevel, 0f, 1f) * 100f, MidpointRounding.AwayFromZero);
-        if (pct == _meterPct) return;
-        _meterPct = pct;
-        _send("sttMeter", new { level = pct / 100f });
+        try
+        {
+            var svc = _service; // snapshot — Stop() nulls the field from other threads
+            if (svc is not { IsRunning: true }) return;
+            int pct = (int)MathF.Round(Math.Clamp(svc.MeterLevel, 0f, 1f) * 100f, MidpointRounding.AwayFromZero);
+            if (pct == _meterPct) return;
+            _meterPct = pct;
+            _send("sttMeter", new { level = pct / 100f });
+        }
+        catch (Exception ex) { ErrorLog.WriteEntry("MeterTick", ex); }   // a timer callback: never let it crash the process
     }
 
     private static string ReadEmbeddedDoc(string name)

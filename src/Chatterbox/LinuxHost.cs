@@ -306,8 +306,14 @@ public static class LinuxHost
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             // First without the lock: a folder that cannot take the file at
-            // all (full disk, read-only) must not read as "already running".
+            // all (full disk, read-only) must not read as "already running"
+            // — that failure runs the app unguarded and is logged.
             using (new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite)) { }
+        }
+        catch (Exception ex) { ErrorLog.WriteEntry("SingleInstance", ex); return new MemoryStream(); }
+        try
+        {
+            // Only this open can fail for the lock: the file is there and writable.
             var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             try { stream.SetLength(0); stream.Write(Encoding.ASCII.GetBytes(Environment.ProcessId.ToString())); stream.Flush(); } catch { }
             return stream;

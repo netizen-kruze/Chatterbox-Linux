@@ -92,7 +92,11 @@ internal static class Program
         // — even if another Chatterbox instance owns the mutex, VRChat must
         // start. In this mode the app also exits when the game exits. The
         // working directory is inherited: Steam already set it for the game.
-        bool withVrchat = false;
+        // A successor of a wrapper-mode instance (an in-app restart for an
+        // update or the GPU pack) does not launch the game again, but it
+        // still has to leave with it — the switch carries that over.
+        bool withVrchat = own.Contains(ExitWithVrchatFlag);
+        _withVrchat = withVrchat;
         if (wrapperMode)
         {
             try
@@ -115,6 +119,7 @@ internal static class Program
                 }
                 Process.Start(psi)?.Dispose();
                 withVrchat = true;
+                _withVrchat = true;
             }
             catch (Exception ex) { ErrorLog.WriteEntry("WrapperLaunch", ex); }
         }
@@ -204,6 +209,17 @@ internal static class Program
 
         using var watcher = new PresenceWatcher(vrchatLogDir);
         if (assumeGame) watcher.IsGameRunning = () => true;
+        // What the watcher does and sees — which file it follows, a folder
+        // that appears, a poll that fails — goes to the boot log, where a
+        // "Players shows nothing" report can be read off. Repeats are
+        // folded and the total is capped: a failure every second must not
+        // write a log that grows all session.
+        watcher.DebugLog += line =>
+        {
+            if (line == _lastWatcherLine || Interlocked.Increment(ref _watcherLines) > 300) return;
+            _lastWatcherLine = line;
+            BootLog.Append(line);
+        };
         using var ctrl = new StandaloneSttController(watcher, SendToUi);
 
         // No tray on Linux: closing the window quits, cleanly (captions
@@ -313,6 +329,8 @@ internal static class Program
 
     private const int HeartbeatTimeoutMs = 60_000;
     private static long _lastPingAt;
+    private static string? _lastWatcherLine;
+    private static int _watcherLines;
 
     private const string Usage =
         "Chatterbox — live captions for VRChat (Linux)\n" +
@@ -323,7 +341,8 @@ internal static class Program
         "  Chatterbox --install-gpu           Download GPU acceleration for Whisper (CUDA) from a terminal, progress on stdout\n" +
         "  Chatterbox --update                Settings > Updates > Update now from a terminal: fetch the latest release, verify it, swap it in when this command exits\n" +
         "  Chatterbox <game command...>       Steam launch-option mode (\"/path/to/Chatterbox %command%\"): start the game, exit with it\n" +
-        "  --data-dir <dir>  --vrchat-log-dir <dir>  --assume-vrchat-running   test hooks (tools/smoke.sh)\n" +
+        "  --data-dir <dir>  --vrchat-log-dir <dir>  --assume-vrchat-running   test hooks (tools/smoke.sh, tools/scenarios.sh)\n" +
+        "  --exit-with-vrchat                 internal: set on the restarted instance of a Steam-launched one, so it still exits with the game\n" +
         "  --update-url <url>                 test hook: a \"latest release\" JSON document standing in for GitHub's API\n" +
         "  --capture-command <cmd>            test hook: a shell command writing raw 16 kHz mono s16le PCM to stdout replaces the recorder (tools/soak.sh)\n";
 
@@ -568,7 +587,12 @@ internal static class Program
         try
         {
             var exe = _exePath ?? throw new InvalidOperationException("no process path");
-            var args = ForwardedArgs(_ownArgs).Concat(new[] { "--after", Environment.ProcessId.ToString() }).ToList();
+            var args = ForwardedArgs(_ownArgs).ToList();
+            // Launched by Steam with the game: the successor must still
+            // exit when VRChat does (without launching it again).
+            if (_withVrchat && !args.Contains(ExitWithVrchatFlag)) args.Add(ExitWithVrchatFlag);
+            args.Add("--after");
+            args.Add(Environment.ProcessId.ToString());
             if (pendingSwap != null)
             {
                 if (AppUpdater.StartSwapHelper(exe, relaunch: true, args) is { } helperError)
@@ -596,10 +620,14 @@ internal static class Program
         }
     }
 
+    internal const string ExitWithVrchatFlag = "--exit-with-vrchat";
+    private static volatile bool _withVrchat;
     private static readonly string[] ValueFlags = { "--data-dir", "--vrchat-log-dir", "--capture-command", "--update-url" };
-    private static readonly string[] SwitchFlags = { "--assume-vrchat-running" };
+    private static readonly string[] SwitchFlags = { "--assume-vrchat-running", ExitWithVrchatFlag };
 
-    private static IEnumerable<string> ForwardedArgs(string[] args)
+    // The switches of this instance that its successor must see again —
+    // never the game's command line, never --after.
+    internal static IEnumerable<string> ForwardedArgs(string[] args)
     {
         for (int i = 0; i < args.Length; i++)
         {
@@ -674,13 +702,13 @@ internal static class Program
     }
 
     // whisper.cpp CPU natives ride inside the executable and are placed in
-    // runtimes/linux-x64 at boot: under a single-file publish the host
-    // would extract bundled natives to its own cache dir, which Whisper.net's
-    // loader never probes. <root>/runtimes/linux-x64 IS probed, where root
-    // is the executable's folder when writable, else the data folder (then
-    // Whisper.net is pointed at it). The VAD loads through whisper.cpp too,
-    // so captions need these even on Parakeet. Always overwritten (~2.5 MB):
-    // an update must never leave a stale native behind.
+    // <data folder>/runtimes/linux-x64 at boot: under a single-file publish
+    // the host would extract bundled natives to its own cache dir, which
+    // Whisper.net's loader never probes; it does probe <root>/runtimes/…
+    // once pointed at the root (SttPaths.RuntimeRoot — always the data
+    // folder, where the packs live too). The VAD loads through whisper.cpp
+    // too, so captions need these even on Parakeet. Always overwritten
+    // (~2.5 MB): an update must never leave a stale native behind.
     // Packs used to live under runtimes/ beside the binary; they now live in
     // the data folder (SttPaths.RuntimeRoot), so a copy made by "Add to app
     // grid" or a new version finds them and --purge removes them. A leftover
