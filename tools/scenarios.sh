@@ -126,8 +126,10 @@ echo "=== S6: the WebKit web process dies -> the heartbeat watchdog reloads the 
 D="$(scenario s6)"; fakelog "$D/vr"
 "$EXE" --data-dir "$D" --vrchat-log-dir "$D/vr" >"$D/a.out" 2>"$D/a.err" & A=$!
 sleep 6
-WP="$(pgrep -f WebKitWebProcess | head -1)"
-check "a WebKit web process exists"                  "$([ -n "$WP" ] && echo 1 || echo 0)"
+# Only THIS instance's web process (a direct child of the app) — never
+# another Chatterbox's or a browser's.
+WP="$(pgrep -P "$A" -f WebKitWebProcess | head -1)"
+check "the app has a WebKit web process"             "$([ -n "$WP" ] && echo 1 || echo 0)"
 [ -n "$WP" ] && kill -KILL "$WP"
 sleep 80
 check "app alive 80 s after the web process died"    "$(alive $A)"
