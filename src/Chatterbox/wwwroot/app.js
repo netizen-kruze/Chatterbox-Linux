@@ -40,6 +40,11 @@ function onPartial(committed, pending) {
   $('capCommitted').textContent = committed;
   $('capPending').textContent = pending ? ' ' + pending : '';
 }
+function onTranslated(p) {
+  $('capTranslated').textContent = p.translated;
+  $('capTranslated').hidden = false;
+  $('transPreview').innerHTML = `<div class="orig">${esc(p.original)}</div><div class="tr">${esc(p.translated)}</div>`;
+}
 function foldCaption() {
   const cur = $('capCommitted').textContent;
   if (!cur) return;
@@ -54,6 +59,8 @@ function resetStage() {
   $('capCurrent').hidden = true;
   $('capCommitted').textContent = '';
   $('capPending').textContent = '';
+  $('capTranslated').textContent = '';
+  $('capTranslated').hidden = true;
   $('gameChip').hidden = true;
   $('stageIdle').hidden = false;
   $('meterBar').style.width = '0%';
@@ -138,6 +145,15 @@ function renderDevices(p) {
     b.classList.toggle('on', parseInt(b.dataset.v, 10) === p.clearGapMs));
   setToggle($('tglTyping'), p.typingIndicator);
   setToggle($('tglNames'), p.nameBoost);
+  setToggle($('tglTranslate'), p.translateEnabled);
+  setToggle($('tglTransOrig'), p.translateShowOriginal);
+  $('selTransLang').innerHTML = (p.translateLanguages || []).map(l =>
+    `<option value="${esc(l.code)}" ${l.code === p.translateTarget ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+  $('transStatus').textContent = p.translateReady
+    ? (p.translateGpu ? 'Translation model and engine installed — runs on your GPU (Vulkan).' : 'Translation model and engine installed — runs on your CPU.')
+    : 'Needs the translation model and the engine pack from the Models screen.';
+  $('transDot').className = 'dot ' + (p.translateReady ? 'ok' : 'warn');
+  $('btnTransModels').hidden = !!p.translateReady;
   const wm = $('selWhisperModel');
   wm.innerHTML = `<option value="">Auto${p.whisperModelName ? ` (${esc(p.whisperModelName)})` : ''}</option>` +
     (p.whisperModels || []).map(m =>
@@ -305,7 +321,8 @@ function renderModels(p) {
       </div>`;
   };
 
-  const isComponent = m => m.isVad || m.id === 'cuda-gpu-pack';
+  const isComponent = m => m.isVad || m.kind === 'translation' || m.id === 'cuda-gpu-pack' ||
+    m.id === 'translate-engine' || m.id === 'translate-gpu-pack';
   $('modelRows').innerHTML = p.models.filter(m => !isComponent(m)).map(rowFor).join('');
   $('componentRows').innerHTML = p.models.filter(isComponent).map(rowFor).join('');
   document.querySelectorAll('[data-dl]').forEach(b =>
@@ -470,6 +487,19 @@ toggleHandler($('tglNames'), () => {
   dev.nameBoost = !dev.nameBoost; // optimistic
   send({ action: 'sttConfig', nameBoost: dev.nameBoost });
 });
+toggleHandler($('tglTranslate'), () => {
+  if (!dev) return;
+  dev.translateEnabled = !dev.translateEnabled; // optimistic
+  send({ action: 'sttConfig', translateEnabled: dev.translateEnabled });
+});
+toggleHandler($('tglTransOrig'), () => {
+  if (!dev) return;
+  dev.translateShowOriginal = !dev.translateShowOriginal; // optimistic
+  send({ action: 'sttConfig', translateShowOriginal: dev.translateShowOriginal });
+});
+$('selTransLang').addEventListener('change', () =>
+  send({ action: 'sttConfig', translateTarget: $('selTransLang').value }));
+$('btnTransModels').addEventListener('click', () => showView('models'));
 $('selWhisperModel').addEventListener('change', () =>
   send({ action: 'sttConfig', whisperModel: $('selWhisperModel').value }));
 $('selDevice').addEventListener('change', () =>
@@ -521,6 +551,7 @@ function onMessage(raw) {
     case 'sttModels': renderModels(p); break;
     case 'sttPlayers': renderSeen(p); break;
     case 'sttPartial': onPartial(p.committed, p.pending); break;
+    case 'sttTranslated': onTranslated(p); break;
     case 'sttSpeech': setSpeech(p.active); if (!p.active) foldCaption(); break;
     case 'sttMeter': $('meterBar').style.width = Math.round((p.level ?? 0) * 100) + '%'; break;
     case 'sttSent': $('gameChip').hidden = false; $('gameChip').textContent = `in-game window ${(p.text ?? '').length}/144`; break;

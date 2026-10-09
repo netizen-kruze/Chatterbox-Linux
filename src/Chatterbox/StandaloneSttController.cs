@@ -311,6 +311,8 @@ public sealed class StandaloneSttController : IDisposable
     private long _lastUpdateProgressAt;
     private System.Threading.Timer? _startupUpdateCheck;
     private const int StartupUpdateCheckDelayMs = 6000;
+    // ── translation (LlamaTranslator): loaded at Start when enabled, freed at Stop ──
+    private LlamaTranslator? _translator;
 
     private void SendUpdateState(string state, string? error = null, long received = 0, long total = 0)
     {
@@ -434,6 +436,55 @@ public sealed class StandaloneSttController : IDisposable
         }
         finally { _updateBusy = 0; }
     }
+
+    // ── translation ──────────────────────────────────────────────────────
+    private static bool TranslateReady(SttModelManager models) =>
+        SttTranslatePacks.Cpu.IsInstalled() && models.IsInstalled(SttModelCatalog.Translation);
+
+    // Wires the relay to a loaded translator when the setting is on, or
+    // unwires it. Loads the model if needed (seconds; 1 GB), so this runs on
+    // the session thread at Start or through RunOffUiThread — never on the
+    // window thread. Missing pieces degrade to untranslated captions with
+    // a toast that points at the Models screen, never a failed session.
+    private void AttachTranslator()
+    {
+        var relay = _relay;
+        if (relay == null) return;
+        if (!_settings.TranslateEnabled) { relay.Translator = null; return; }
+        if (!TranslateReady(_models))
+        {
+            relay.Translator = null;
+            _send("toast", new { ok = false, msg = "Translation is on, but the translation model and engine pack are not installed — captions run untranslated",
+                                 action = new { label = "Open Models", view = "models" } });
+            return;
+        }
+        bool gpu = SttTranslatePacks.Gpu.IsInstalled();
+        if (_translator == null || _translator.UseGpu != gpu)
+        {
+            _translator?.Dispose();
+            var translator = new LlamaTranslator(_models.PathFor(SttModelCatalog.Translation), gpu);
+            if (!translator.TryLoad(out var error))
+            {
+                translator.Dispose();
+                _translator = null;
+                relay.Translator = null;
+                ErrorLog.WriteNote("Translate", error ?? "load failed");
+                _send("toast", new { ok = false, msg = $"Translation unavailable — {error}. Captions run untranslated." });
+                return;
+            }
+            _translator = translator;
+            BootLog.Append($"translation: {Path.GetFileName(translator.ModelPath)} loaded in {translator.LoadMs} ms " +
+                           $"({(gpu ? "Vulkan GPU" : $"CPU, {translator.Threads} threads")}) → {LlamaTranslator.LanguageName(_settings.TranslateTarget)}");
+        }
+        var tr = _translator;
+        relay.ShowOriginal = _settings.TranslateShowOriginal;
+        relay.OnTranslated -= OnTranslated;
+        relay.OnTranslated += OnTranslated;
+        relay.Translator = (text, ct) => tr.TranslateAsync(text, _settings.TranslateTarget, ct);
+    }
+
+    private void OnTranslated(string original, string translated) =>
+        _send("sttTranslated", new { original, translated });
 
     // Session work requested from the UI thread runs here: an engine load
     // takes seconds and would freeze the window (and Photino's message
@@ -691,6 +742,13 @@ public sealed class StandaloneSttController : IDisposable
                         ok += eok;
                         bad.AddRange(ebad);
                     }
+                    foreach (var pack in new[] { SttTranslatePacks.Cpu, SttTranslatePacks.Gpu })
+                    {
+                        if (!pack.IsInstalled()) continue;
+                        var (pok, pbad) = pack.VerifyFiles();
+                        ok += pok;
+                        bad.AddRange(pbad);
+                    }
                     _send("toast", bad.Count == 0
                         ? new { ok = true, msg = $"All {ok} installed model file(s) verified" }
                         : new { ok = false, msg = $"Verification FAILED: {string.Join(", ", bad)} — delete and re-download" });
@@ -856,6 +914,11 @@ public sealed class StandaloneSttController : IDisposable
                         _settings.Engine = msg["engine"]?.ToString() ?? _settings.Engine;
                         if (_settings.Engine == "vosk") _settings.Engine = "parakeet";
                         _settings.WhisperModel = msg["whisperModel"]?.ToString() ?? _settings.WhisperModel;
+                        _settings.TranslateEnabled = msg["translateEnabled"]?.Value<bool>() ?? _settings.TranslateEnabled;
+                        if (msg["translateTarget"]?.ToString() is { Length: > 0 } target &&
+                            LlamaTranslator.Languages.Any(l => l.Code == target))
+                            _settings.TranslateTarget = target;
+                        _settings.TranslateShowOriginal = msg["translateShowOriginal"]?.Value<bool>() ?? _settings.TranslateShowOriginal;
                         _settings.Save();
                     }
 
@@ -876,6 +939,9 @@ public sealed class StandaloneSttController : IDisposable
                                 _relay.IntervalMs = _settings.IntervalMs;
                                 _relay.Start();
                             }
+                            _relay.ShowOriginal = _settings.TranslateShowOriginal;   // target is read live
+                            if (_settings.TranslateEnabled != (_relay.Translator != null))
+                                AttachTranslator();                                  // a model load: already off the window thread
                         }
                     });
                     // The UI renders settings state only from these payloads —
@@ -1068,6 +1134,33 @@ public sealed class StandaloneSttController : IDisposable
                         break;
                     }
 
+                    if (SttTranslatePacks.Find(id) is { } pack)
+                    {
+                        _downloadingId = id;
+                        _downloadCts = new CancellationTokenSource();
+                        var packCt = _downloadCts.Token;
+                        SendModels();
+                        _ = Task.Run(async () =>
+                        {
+                            var (ok, error) = await pack.DownloadAsync((received, total) =>
+                            {
+                                long now = Environment.TickCount64;
+                                if (now - _lastProgressSentAt < 150 && received != total) return;
+                                _lastProgressSentAt = now;
+                                _send("sttModelProgress", new { id, received, total });
+                            }, packCt);
+                            _downloadingId = null;
+                            _downloadCts?.Dispose();
+                            _downloadCts = null;
+                            _send("toast", ok
+                                ? new { ok = true, msg = $"{pack.DisplayName} installed" }
+                                : new { ok = false, msg = error ?? "download failed" });
+                            SendModels();
+                            SendDevices();
+                        });
+                        break;
+                    }
+
                     var info = SttModelCatalog.Find(id);
                     if (info == null) break;
 
@@ -1126,6 +1219,11 @@ public sealed class StandaloneSttController : IDisposable
                     {
                         SttGpuPack.Delete();
                         _send("toast", new { ok = true, msg = "GPU acceleration removed — takes effect after restarting Chatterbox" });
+                    }
+                    else if (SttTranslatePacks.Find(id) is { } pack)
+                    {
+                        pack.Delete();
+                        _send("toast", new { ok = true, msg = $"{pack.DisplayName} removed" });
                     }
                     else
                     {
@@ -1241,6 +1339,7 @@ public sealed class StandaloneSttController : IDisposable
         };
         _relay.OnLog += RouteSttLog;
         _relay.OnTextSent += text => _send("sttSent", new { text });
+        AttachTranslator();
         _relay.Start();
 
         // Experimental name recognition: everything below runs ONLY when the
@@ -1309,6 +1408,8 @@ public sealed class StandaloneSttController : IDisposable
             _service?.Stop();
             _relay?.Dispose();
             _relay = null;
+            _translator?.Dispose();   // 1 GB of weights: not kept between sessions
+            _translator = null;
             _service?.Dispose();
             _service = null;
             SendState();
@@ -1475,6 +1576,12 @@ public sealed class StandaloneSttController : IDisposable
             whisperModels = installed,
             whisperModelSetting = _settings.WhisperModel,
             vadAvailable = _models.IsInstalled(SttModelCatalog.Vad),
+            translateEnabled = _settings.TranslateEnabled,
+            translateTarget = _settings.TranslateTarget,
+            translateShowOriginal = _settings.TranslateShowOriginal,
+            translateReady = TranslateReady(_models),
+            translateGpu = SttTranslatePacks.Gpu.IsInstalled(),
+            translateLanguages = LlamaTranslator.Languages.Select(l => new { code = l.Code, name = l.Name }),
             parakeetAvailable = SttEnginePack.IsInstalled() && _models.IsInstalled(SttModelCatalog.Find(SttModelCatalog.ParakeetId)!),
             modelDir = SttPaths.ModelDir,
         });
@@ -1504,6 +1611,7 @@ public sealed class StandaloneSttController : IDisposable
                     ? _settings.Engine == "parakeet" && _models.IsInstalled(m)
                     : _settings.Engine == "whisper" && m.PrimaryFileName == activeFile,
                 isVad = m.Id == SttModelCatalog.VadId,
+                kind = m.Id == SttModelCatalog.VadId ? "vad" : m.Id == SttModelCatalog.TranslateId ? "translation" : "stt",
             }).Append(new
             {
                 id = SttEnginePack.Id,
@@ -1514,6 +1622,7 @@ public sealed class StandaloneSttController : IDisposable
                 installed = SttEnginePack.IsInstalled(),
                 active = false,
                 isVad = false,
+                kind = "pack",
             }).Append(new
             {
                 id = SttGpuPack.Id,
@@ -1524,7 +1633,19 @@ public sealed class StandaloneSttController : IDisposable
                 installed = SttGpuPack.IsInstalled(),
                 active = false,
                 isVad = false,
-            }),
+                kind = "pack",
+            }).Concat(new[] { SttTranslatePacks.Cpu, SttTranslatePacks.Gpu }.Select(pack => new
+            {
+                id = pack.Id,
+                displayName = pack.DisplayName,
+                sizeBytes = pack.SizeBytes,
+                license = pack.License,
+                attribution = pack.Attribution,
+                installed = pack.IsInstalled(),
+                active = false,
+                isVad = false,
+                kind = "pack",
+            })),
         });
     }
 
@@ -1771,6 +1892,8 @@ public sealed class StandaloneSttController : IDisposable
         _provisionalRecheck?.Dispose();
         _bootFallback?.Dispose();
         _startupUpdateCheck?.Dispose();
+        _translator?.Dispose();
+        _translator = null;
         // Wait out any in-flight timer ticks before Stop() nulls _service.
         using (var done = new ManualResetEvent(false))
             if (_meterTimer.Dispose(done)) done.WaitOne(1000);

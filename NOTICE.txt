@@ -8,6 +8,8 @@ Third-party software
 - ONNX Runtime — MIT (Microsoft)
 - Photino.NET — Apache-2.0 (TryPhotino)
 - Newtonsoft.Json — MIT (James Newton-King)
+- LLamaSharp and llama.cpp — MIT (Martin Evans and contributors; Georgi
+  Gerganov et al.) — the translation runtime, fetched on demand
 - .NET runtime — MIT (.NET Foundation and Contributors), bundled in the
   self-contained binary
 - Atkinson Hyperlegible font — SIL OFL 1.1 (Braille Institute of America)
@@ -16,7 +18,9 @@ Third-party software
 System components used at runtime, provided by the distribution and not
 bundled: GTK 3, libnotify and WebKitGTK (the window), PipeWire's pw-record
 or PulseAudio's parec (microphone capture), coredumpctl/journalctl (crash
-records), and the NVIDIA driver's libcuda.so.1 for optional GPU acceleration.
+records), the NVIDIA driver's libcuda.so.1 for optional GPU acceleration,
+and the Vulkan loader (libvulkan.so.1) with the GPU driver's Vulkan ICD for
+optional GPU-accelerated translation.
 
 Models (downloaded at runtime, never bundled)
 ---------------------------------------------
@@ -27,6 +31,10 @@ Models (downloaded at runtime, never bundled)
 - Silero VAD — MIT (snakers4/silero-vad; ggml conversion by ggml-org)
 - Whisper CUDA acceleration pack — MIT (whisper.cpp CUDA build, packaged
   by Whisper.net)
+- Tencent Hy-MT2 1.8B translation model — Apache-2.0 (Tencent Hunyuan; GGUF
+  by Tencent). License: https://www.apache.org/licenses/LICENSE-2.0
+- Translation runtime packs (llama.cpp CPU and Vulkan builds for Linux,
+  packaged by LLamaSharp) — MIT
 - NVIDIA CUDA 13 runtime and cuBLAS (libcudart, libcublas, libcublasLt) —
   NVIDIA Software License Agreement (proprietary; these runtime libraries
   are redistributable under it). Fetched on request from NVIDIA's own

@@ -120,6 +120,34 @@ Chatterbox checks for those libraries and says so when they are missing
 instead of asking for a restart that would change nothing. Parakeet (the
 recommended engine) is fast on the CPU either way and needs none of this.
 
+## Translation
+
+Chatterbox can translate your captions before they reach the chatbox, so
+people who read another language can follow you — still entirely on your
+own machine. On the **Models** screen download the **Hy-MT2 1.8B
+translation model** (1.1 GB, Tencent, Apache-2.0) and the **Translation
+engine** (36 MB, llama.cpp); on any GPU — NVIDIA, AMD or Intel — the
+optional **GPU acceleration for translation (Vulkan)** pack (21 MB) makes
+it several times faster. It runs through your distribution's Vulkan loader
+and your GPU driver's Vulkan support (`vulkan-loader` plus the driver's
+ICD — Mesa for AMD and Intel, the NVIDIA driver's own on NVIDIA), with no
+CUDA runtime involved. Then on the **Translate** tab switch **Translate my
+captions** on and pick the language. Each finished sentence
+is translated in about 0.1 s on a GPU and 0.5 s on a modern CPU; the
+chatbox shows the translation, optionally followed by your original words
+in brackets. The engine and model selectors live on the Models screen
+under **In use**.
+
+The packs install under `~/.local/share/Chatterbox/runtimes/linux-x64/native/`
+(one folder per instruction-set variant; the loader picks the best one for
+your processor) and are hash-verified like everything else; `last_boot.log`
+gets a `translation:` line with the load time and whether the CPU or the
+GPU is doing the work.
+
+The model was chosen by a timed comparison of the small open-weight
+translators (`docs/TRANSLATION_BENCH-2026-10-08.md`): the fastest one that
+was also accurate. The picker lists the languages it does best.
+
 ## Requirements
 
 - Fedora 44 (or another current distribution), x86_64, with a desktop
@@ -168,13 +196,14 @@ from a terminal.
 Chatterbox sends **no telemetry, no analytics, no pings — nothing.** Its
 complete network activity:
 
-- Downloading model files you request (Hugging Face) and the optional
-  engine/GPU packs (nuget.org) — every download checksum-verified. The one
+- Downloading model files you request (Hugging Face, including the
+  translation model) and the optional engine/GPU/translation packs
+  (nuget.org) — every download checksum-verified. The one
   download that starts on its own: after an update that changed the small
   voice-detection model, the new file (under 1 MB, same source, same
   checksum check) is fetched the first time Chatterbox starts.
 - Checking for updates — when you press **Check for updates**, or at
-  startup if you turned that on (off by default): one request to GitHub's
+  startup unless you switched that off under Settings → Updates (it is on by default): one request to GitHub's
   Releases API, which sees the app's name and version and nothing else.
   Pressing **Update now** then downloads the release file from GitHub.
 - Caption text to VRChat over OSC on **your own machine only**
@@ -182,7 +211,8 @@ complete network activity:
 
 That is the entire list. The window is a WebKitGTK view of files inside
 the app; it performs no background networking of its own. Your speech is
-transcribed locally and is never transmitted anywhere.
+transcribed locally and is never transmitted anywhere, and so is its
+translation.
 
 ## Troubleshooting
 

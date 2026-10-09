@@ -33,6 +33,7 @@ public sealed record SttModelInfo(
 public static class SttModelCatalog
 {
     public const string VadId = "vad";
+    public const string TranslateId = "hy-mt2-1.8b";
     public const string ParakeetId = "parakeet-tdt-0.6b-v2";
     public const string ParakeetSubdir = "parakeet-tdt-0.6b-v2-int8";
 
@@ -83,6 +84,15 @@ public static class SttModelCatalog
                 "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
                 "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin"),
         }, "MIT", "Silero VAD (MIT) by snakers4/silero-vad, ggml conversion by ggml-org"),
+        // Translation (optional, Settings → Translation): Tencent's Hy-MT2
+        // 1.8B, chosen by a timed bench (docs/TRANSLATION_BENCH-2026-10-08.md).
+        // Revision-pinned like Parakeet; runs through the translation packs.
+        new(TranslateId, "Hy-MT2 1.8B translation model (Q4)", "", new[]
+        {
+            new SttModelFile("Hy-MT2-1.8B-Q4_K_M.gguf", 1_133_080_448,
+                "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699",
+                "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/a0c709d9fac510f2c807aa3af52872340dc37a4a/Hy-MT2-1.8B-Q4_K_M.gguf"),
+        }, "Apache-2.0", "Tencent Hunyuan Hy-MT2 1.8B (Apache-2.0), GGUF by Tencent"),
     };
 
     public static SttModelInfo? Find(string id) => Models.FirstOrDefault(m => m.Id == id);
@@ -90,6 +100,10 @@ public static class SttModelCatalog
     // The voice detector every session needs. SileroVadSegmenter reads its
     // file name from here, so a version change happens in this one entry.
     public static SttModelInfo Vad => Find(VadId)!;
+    public static SttModelInfo Translation => Find(TranslateId)!;
+    // Recognition models are what the Models screen's first group lists;
+    // the voice detector and the translation model are components.
+    public static bool IsComponent(string id) => id == VadId || id == TranslateId;
 }
 
 // Runtime model download with SHA-256 verification and a license manifest.

@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Chatterbox.Stt;
 
@@ -35,6 +36,19 @@ public sealed class SttChatboxRelay : IDisposable
 
     public bool TypingIndicator { get; set; } = true;
 
+    // Translation (optional). When set, finished utterances go through it
+    // before they reach the chatbox, one at a time and in order; the live
+    // (partial) text is withheld from the chatbox meanwhile, because a
+    // reader of the target language gains nothing from it — the typing
+    // indicator covers the gap. A translation that fails or comes back
+    // empty falls back to the original words, so nothing said is lost.
+    // Set before Start, or between utterances; cleared by Stop.
+    public Func<string, CancellationToken, Task<string?>>? Translator { get; set; }
+    public bool ShowOriginal { get; set; }
+    public event Action<string, string>? OnTranslated;   // (original, translated)
+    private readonly SemaphoreSlim _translateGate = new(1, 1);
+    private CancellationTokenSource? _translateCts;
+
     // Raised after each chatbox text send — the host uses this for the
     // UI's sent-preview.
     public event Action<string>? OnTextSent;
@@ -63,8 +77,18 @@ public sealed class SttChatboxRelay : IDisposable
         _buffer = new RollingChatboxBuffer(
             RollingChatboxBuffer.DefaultMaxChars - (hideBackgroundReserve ? 2 : 0));
         _osc = new ChatboxOscSender(ip, port);
-        _onPartial = (committed, _) => { _buffer.UpdateLive(committed, _nextOnNewLine); Push(); };
-        _onFinal = text => { _buffer.CommitUtterance(text, _nextOnNewLine); Push(); };
+        _onPartial = (committed, _) =>
+        {
+            if (Translator != null) return;
+            _buffer.UpdateLive(committed, _nextOnNewLine);
+            Push();
+        };
+        _onFinal = text =>
+        {
+            if (Translator == null) { _buffer.CommitUtterance(text, _nextOnNewLine); Push(); return; }
+            bool onNewLine = _nextOnNewLine;
+            _ = TranslateAndCommitAsync(text, onNewLine);
+        };
         _onSpeechActive = OnSpeechActiveChanged;
     }
 
@@ -74,6 +98,7 @@ public sealed class SttChatboxRelay : IDisposable
         _started = true;
 
         _throttle = new CoalescingThrottle(SendText, IntervalMs);
+        _translateCts = new CancellationTokenSource();
         _typingPulse = new System.Threading.Timer(
             _ => { if (_speechActive && TypingIndicator) _osc.SendTyping(true); },
             null, Timeout.Infinite, Timeout.Infinite);
@@ -95,6 +120,9 @@ public sealed class SttChatboxRelay : IDisposable
 
         _typingPulse?.Dispose();
         _typingPulse = null;
+        try { _translateCts?.Cancel(); } catch { }
+        _translateCts?.Dispose();
+        _translateCts = null;
         _throttle?.Dispose();
         _throttle = null;
 
@@ -106,6 +134,39 @@ public sealed class SttChatboxRelay : IDisposable
         _nextOnNewLine = false;
         OnLog?.Invoke("[STT] chatbox relay stopped");
     }
+
+    // One utterance at a time, in arrival order; the gate keeps a slow
+    // translation from reordering two quick sentences.
+    private async Task TranslateAndCommitAsync(string text, bool onNewLine)
+    {
+        var translator = Translator;
+        var cts = _translateCts;
+        if (translator == null || cts == null) return;
+        var ct = cts.Token;
+        string? translated = null;
+        try
+        {
+            await _translateGate.WaitAsync(ct).ConfigureAwait(false);
+            try { translated = await translator(text, ct).ConfigureAwait(false); }
+            finally { _translateGate.Release(); }
+        }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex)
+        {
+            ErrorLog.WriteEntry("Translate", ex);
+            OnLog?.Invoke($"[STT] translation failed — {ex.Message}");
+        }
+        if (ct.IsCancellationRequested || !_started) return;
+        _buffer.CommitUtterance(ChatboxText(text, translated, ShowOriginal), onNewLine);
+        Push();
+        if (translated != null) OnTranslated?.Invoke(text, translated);
+    }
+
+    // What the chatbox gets for a finished utterance: the translation, the
+    // translation with the original in brackets, or — when translation
+    // produced nothing — the original words.
+    internal static string ChatboxText(string original, string? translated, bool showOriginal) =>
+        translated == null ? original : showOriginal ? $"{translated} ({original})" : translated;
 
     private void Push()
     {

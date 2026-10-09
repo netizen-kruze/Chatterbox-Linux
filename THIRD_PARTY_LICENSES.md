@@ -7,9 +7,12 @@ full license texts that redistribution requires.
 - [MIT License](#mit-license) — Whisper.net (© 2024 sandrohanea),
   whisper.cpp (© 2023–2024 The ggml authors), the .NET runtime (© .NET
   Foundation and Contributors), Newtonsoft.Json (© 2007 James Newton-King), ONNX Runtime
-  (© Microsoft Corporation), Silero VAD (© Silero Team)
+  (© Microsoft Corporation), Silero VAD (© Silero Team), LLamaSharp
+  (© Martin Evans and contributors), llama.cpp (© 2023–2026 The ggml
+  authors)
 - [Apache License 2.0](#apache-license-20) — Photino.NET (TryPhotino),
-  sherpa-onnx (k2-fsa)
+  sherpa-onnx (k2-fsa), Hy-MT2 1.8B translation model (© Tencent Hunyuan;
+  downloaded at runtime, never bundled)
 - [SIL Open Font License 1.1](#sil-open-font-license-11) — Atkinson
   Hyperlegible (© 2020 Braille Institute of America, Inc., Reserved Font
   Name "Atkinson Hyperlegible"), IBM Plex Sans / IBM Plex Mono (© 2017
@@ -36,6 +39,8 @@ the copyright line of its respective holder:
 > Copyright (c) 2007 James Newton-King (Newtonsoft.Json)
 > Copyright (c) Microsoft Corporation (ONNX Runtime)
 > Copyright (c) Silero Team (Silero VAD)
+> Copyright (c) Martin Evans and contributors (LLamaSharp)
+> Copyright (c) 2023–2026 The ggml authors (llama.cpp)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

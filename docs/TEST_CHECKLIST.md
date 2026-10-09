@@ -38,6 +38,9 @@ and `~/.config/Chatterbox` away (restore after this section).
 - [ ] Parakeet engine pack: downloads into
       `~/.local/share/Chatterbox/runtimes/linux-x64/`; Start on Parakeet
       works immediately, no restart.
+- [ ] Models → **In use** (moved from Settings in 1.7.0): the engine switch
+      and the Whisper model picker change the Active badge below and
+      persist across a restart.
 - [ ] Restore your real folders.
 
 ## B. Captions core
@@ -137,6 +140,39 @@ and `~/.config/Chatterbox` away (restore after this section).
 - [ ] VRChat holds the mic throughout — game voice unaffected (PipeWire
       shares the input).
 
+## H. Translation (1.7.x)
+
+- [ ] The Translate tab shows whether the model and engine are installed
+      (an **Open Models** button when they are not) and the last translated
+      sentence once captions run.
+- [ ] Models → Components lists the Hy-MT2 translation model (1.1 GB), the
+      Translation engine (36 MB) and GPU acceleration for translation
+      (Vulkan, 21 MB); each downloads with progress, Cancel works, and
+      **Verify installed files** covers the pack libraries. Afterwards
+      `~/.local/share/Chatterbox/runtimes/linux-x64/native/` holds
+      `avx/`, `avx2/`, `avx512/`, `noavx/` (and `vulkan/`) with
+      libggml-base.so, libggml-cpu.so (libggml-vulkan.so), libggml.so and
+      libllama.so — no libmtmd.so.
+- [ ] Translate tab: switch on, "Translate into" Japanese, Start, speak a
+      sentence and pause → the chatbox shows the Japanese sentence (check
+      CJK renders in-game over OSC), the Captions page shows it under your
+      words in amber, and `last_boot.log` has a "translation: … loaded in
+      N ms (CPU, T threads | Vulkan GPU) → Japanese" line.
+- [ ] Vulkan pack on a machine without a usable Vulkan driver (no
+      `libvulkan.so.1`, or `vulkaninfo` fails): the load falls back to the
+      CPU build (`WithAutoFallback`) or reports "Translation unavailable"
+      in a toast — never a crash, and captions keep running untranslated.
+- [ ] "Show the original too" → chatbox shows "translation (original)".
+- [ ] Translation on with the model or engine pack missing → Start still
+      works, captions run untranslated, a toast with **Open Models** says
+      why. Same when the model fails to load.
+- [ ] Switching translation off while captions run stops translating at
+      the next sentence; on again resumes (the model loads once, 1–3 s).
+- [ ] Stop frees the model (`ps -o rss` on the process: drops by about
+      1.2 GB).
+- [ ] A copy run from a read-only folder (/opt): the packs still install,
+      because they go to the data folder, not beside the binary.
+
 ## G. Other machines (any Linux desktop — no VRChat session needed)
 
 - [ ] `tools/smoke.sh <path to the unpacked Chatterbox binary>` →
@@ -210,7 +246,7 @@ and `~/.config/Chatterbox` away (restore after this section).
       (one request to api.github.com); a build without it shows the greyed
       "no update source configured" line and never goes online. "Check
       when Chatterbox starts" persists (`CheckUpdatesAtStartup` in
-      stt_settings.json) and is off by default.
+      stt_settings.json) and is on by default.
 - [ ] Update flow, offline-safe: serve a fake release with
       `python3 -m http.server` — a `latest.json` in GitHub's release shape
       (tag `vX.Y.Z` above the build, an asset named

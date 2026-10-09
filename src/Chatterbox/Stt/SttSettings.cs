@@ -29,7 +29,13 @@ public class SttSettings
 
     // Ask GitHub for a newer release once at startup (AppUpdater). Off by
     // default: without it the app never goes online unasked.
-    public bool CheckUpdatesAtStartup { get; set; } = false;
+    public bool CheckUpdatesAtStartup { get; set; } = true;
+    // Translation (Settings → Translation): finished captions are translated
+    // on this machine before they reach the chatbox. Off by default; needs
+    // the translation model and engine pack from the Models screen.
+    public bool TranslateEnabled { get; set; } = false;
+    public string TranslateTarget { get; set; } = "ja";   // LlamaTranslator.Languages code
+    public bool TranslateShowOriginal { get; set; } = false; // chatbox: translation + (original)
 
     public class AutoFriend
     {

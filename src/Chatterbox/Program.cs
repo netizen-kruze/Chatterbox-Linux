@@ -195,6 +195,7 @@ internal static class Program
         SttModelManager.SetUserAgent(ua);
         SttGpuPack.SetUserAgent(ua);
         SttEnginePack.SetUserAgent(ua);
+        SttNativePack.SetUserAgent(ua);
         AppUpdater.SetUserAgent(ua);
         // The machine profile runs tools (nvidia-smi, lspci) that can each take
         // seconds on a bad day; it is gathered while the window comes up.

@@ -19,6 +19,7 @@
     <button class="on" data-view="captions" id="nav-captions"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 12h6M7 15h10"/></svg><span>Captions</span></button>
     <button data-view="players"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 5.5l1 2 2 .3-1.5 1.5.4 2.1-1.9-1-1.9 1 .4-2.1L13 7.8l2-.3z"/></svg><span>Players</span></button>
     <button data-view="models"><svg viewBox="0 0 24 24"><path d="M12 3v10m0 0l-3.5-3.5M12 13l3.5-3.5"/><path d="M4 17.5c2.7 2 5.3 3 8 3s5.3-1 8-3"/></svg><span>Models</span></button>
+    <button data-view="translate"><svg viewBox="0 0 24 24"><path d="M3.5 5.5h8M7.5 3.5v2c0 4-2 7.2-5 9.2M5.5 9.5c1.2 2.4 3.2 4.4 6 5.7"/><path d="M12.5 20.5l4-9.5 4 9.5M14 17.5h5"/></svg><span>Translate</span></button>
     <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4.5V3m0 18v-1.5M6.7 6.7 5.6 5.6m12.8 12.8-1.1-1.1M4.5 12H3m18 0h-1.5M6.7 17.3l-1.1 1.1M18.4 5.6l-1.1 1.1"/></svg><span>Settings</span></button>
     <span class="spacer"></span>
     <div class="tray-note">✕ quits Chatterbox;<br>minimize to keep captions</div>
@@ -29,6 +30,7 @@
     <div class="stage" id="stage">
       <div class="capline older" id="capOlder" hidden></div>
       <div class="capline" id="capCurrent" hidden><span id="capCommitted"></span><span class="pending" id="capPending"></span></div>
+      <div class="capline translated" id="capTranslated" hidden></div>
       <div class="stage-idle" id="stageIdle">Press <b>Start captions</b> and talk — your words appear here and in your VRChat chatbox.</div>
     </div>
     <div class="listenrow">
@@ -105,8 +107,34 @@
       <h2>Models</h2>
       <p class="sub">Every download is verified against its official checksum before it's used.</p>
       <div class="hwbanner"><span class="dot"></span><span id="hwText">detecting hardware…</span><span class="flex1"></span><button class="linkbtn" id="btnVerify">Verify installed files</button></div>
+      <div class="group"><h3>In use</h3>
+        <div class="setrow"><span class="grow"><span class="name">Recognition engine</span><div class="desc">Parakeet: best accuracy on CPU. Whisper: multilingual, GPU-accelerated with the CUDA pack.</div></span>
+          <span class="seg" id="segEngine"><button data-v="parakeet">Parakeet</button><button data-v="whisper">Whisper</button></span></div>
+        <div class="setrow last"><span class="grow"><span class="name">Whisper model</span><div class="desc">Auto picks the best installed model for your hardware; the Active badge below shows which one.</div></span>
+          <select class="setsel" id="selWhisperModel"></select></div>
+      </div>
       <div class="group"><h3>Recognition models</h3><div class="rows" id="modelRows"></div></div>
       <div class="group"><h3>Components</h3><div class="rows" id="componentRows"></div></div>
+    </div>
+  </section>
+
+  <!-- Translate -->
+  <section class="view" id="view-translate">
+    <div class="panel">
+      <h2>Translate</h2>
+      <p class="sub">Each finished sentence is translated on this machine before it reaches the chatbox — nothing is sent anywhere.</p>
+      <div class="hwbanner"><span class="dot" id="transDot"></span><span id="transStatus">checking…</span><span class="flex1"></span><button class="linkbtn" id="btnTransModels" hidden>Open Models</button></div>
+      <div class="group" id="transGroup">
+        <div class="setrow"><span class="grow"><span class="name">Translate my captions</span><div class="desc">On: the chatbox shows the translation of what you say. Off: your words go out as they are.</div></span>
+          <span class="toggle" id="tglTranslate" role="switch" aria-checked="false" tabindex="0"><i></i><b></b></span></div>
+        <div class="setrow"><span class="grow"><span class="name">Translate into</span><div class="desc">The language your chatbox shows. Whatever language you speak is translated into it.</div></span>
+          <select class="setsel" id="selTransLang"></select></div>
+        <div class="setrow last"><span class="grow"><span class="name">Show the original too</span><div class="desc">The chatbox shows the translation followed by your words in brackets — uses more of the 144 characters.</div></span>
+          <span class="toggle" id="tglTransOrig" role="switch" aria-checked="false" tabindex="0"><i></i><b></b></span></div>
+      </div>
+      <div class="group"><h3>Last translation</h3>
+        <div class="transprev" id="transPreview"><span class="muted">Nothing translated yet — start captions and say something.</span></div>
+      </div>
     </div>
   </section>
 
@@ -117,10 +145,6 @@
       <div class="group">
         <div class="setrow"><span class="grow"><span class="name">Recommended defaults</span><div class="desc">Sets everything below to the best choice for this machine: the strongest engine your hardware runs fast, a 1.0 s update rate, and the standard pause behavior. Your microphone and auto-start players are untouched.</div></span>
           <button class="chipbtn amber" id="btnDefaults">Apply Recommended Default Settings</button></div>
-        <div class="setrow"><span class="grow"><span class="name">Recognition engine</span><div class="desc">Parakeet: best accuracy on CPU. Whisper: multilingual, GPU-accelerated with the CUDA pack.</div></span>
-          <span class="seg" id="segEngine"><button data-v="parakeet">Parakeet</button><button data-v="whisper">Whisper</button></span></div>
-        <div class="setrow"><span class="grow"><span class="name">Whisper model</span><div class="desc">Auto picks the best installed model for your hardware.</div></span>
-          <select class="setsel" id="selWhisperModel"></select></div>
         <div class="setrow"><span class="grow"><span class="name">Chatbox update rate</span><div class="desc">How often new words reach the in-game window. 1.0 s is the floor — faster gets rate-limited by VRChat.</div></span>
           <span class="seg" id="segRate"><button data-v="1000">1.0 s</button><button data-v="1500">1.5 s</button><button data-v="2000">2 s</button><button data-v="3000">3 s</button></span></div>
         <div class="setrow"><span class="grow"><span class="name">Typing indicator</span><div class="desc">Shows the chatbox "…" bubble while you're speaking.</div></span>

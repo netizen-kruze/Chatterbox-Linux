@@ -9,7 +9,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>Chatterbox</AssemblyName>
     <RootNamespace>Chatterbox</RootNamespace>
-    <Version>1.6.0</Version>
+    <Version>1.7.1</Version>
     <!-- owner/name of the GitHub repository releases are published to; the
          in-app updater (AppUpdater) asks its Releases API for the latest
          one. Empty = no update source: Settings > Updates says so and the
@@ -42,6 +42,11 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Photino.NET" Version="4.0.16" />
     <PackageReference Include="Whisper.net" Version="$(WhisperNetVersion)" />
+    <!-- Managed binding only: the llama.cpp natives arrive through the
+         in-app translation packs (SttTranslatePacks) into
+         <runtime root>/runtimes/linux-x64/native/<variant>/, the layout the
+         LLamaSharp loader probes under its search directory. -->
+    <PackageReference Include="LLamaSharp" Version="0.27.0" />
     <!-- ExcludeAssets: the runtime package would drop its natives loose in
          the output, and a single-file publish would then bundle them where
          Whisper.net's loader never probes (the host's own extraction dir).
