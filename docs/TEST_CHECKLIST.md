@@ -178,6 +178,11 @@ and `~/.config/Chatterbox` away (restore after this section).
 - [ ] `tools/smoke.sh <path to the unpacked Chatterbox binary>` →
       "SMOKE TEST PASSED" (boots against a throwaway data folder with a
       watched player already present).
+- [ ] `tools/scenarios.sh <binary>` → "SCENARIOS: ALL PASSED" (about five
+      minutes: second launch refused, SIGTERM exit, crash recovery, missing
+      and empty VRChat log, Steam wrapper mode, web-process crash reload —
+      each in its own temporary home; `xvfb-run -a` works without a
+      desktop).
 - [ ] Settings → Speed check → Run → a row per installed engine. The
       verdict matches how captions feel live: *fast* ≈ a second behind,
       *usable* two to three, *too slow* = falling behind. `bench.log`
@@ -284,11 +289,13 @@ Record results here with date + commit.
 
 ## Stability (tools/soak.sh, or by hand)
 
-- [ ] **Soak**: `Chatterbox --capture-command "python3 feed.py fixture.wav"`
-      with auto-start armed runs continuous speech for 20+ minutes; the
-      `memory after N passes:` lines in `last_boot.log` stay flat (RSS
-      within a few tens of MB of the first line, gen2 count not climbing
-      by the minute); no `error.log` entries.
+- [ ] **Soak**: `tools/soak.sh <binary> 20` (the bundled clip fed in a loop
+      through `--capture-command "python3 tools/feed.py …"`, auto-start
+      armed, models borrowed from the real folder) runs continuous speech
+      for 20+ minutes and ends with "SOAK PASSED"; the `memory after N
+      passes:` lines in `last_boot.log` stay flat (RSS within a few tens
+      of MB of the first line, gen2 count not climbing by the minute); no
+      `error.log` entries.
 - [ ] **Recorder dies mid-session** (kill pw-record/parec or the feeder):
       within ~5 s a red toast says captions stopped; Start works again;
       an auto-started session comes back by itself once the device is.

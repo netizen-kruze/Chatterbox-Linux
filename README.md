@@ -373,6 +373,19 @@ on a given PC — no VRChat session needed:
    survives, page connected, settings read, fake VRChat log read, boot
    auto-start check ran, no core dumps. Nothing touches your real settings
    or game log.
+3. **Scenarios**, also for testers with the repository: `tools/scenarios.sh
+   /path/to/Chatterbox` runs the checklist items that need no microphone,
+   model or VRChat in about five minutes — a refused second launch and a
+   clean SIGTERM exit, crash recovery, a missing or empty VRChat log,
+   Steam wrapper mode (the game gets its overlay preload back and the app
+   exits with it), and the page reload after a web-process crash — each
+   in its own temporary home. `xvfb-run -a tools/scenarios.sh …` works
+   without a desktop session.
+4. **Soak**, for an installed engine: `tools/soak.sh /path/to/Chatterbox
+   20` feeds the bundled speech clip in a loop as the microphone for
+   twenty minutes with captions auto-started, then prints the boot log's
+   memory lines and the session summary. Models are borrowed from your
+   real folder, everything else is throwaway.
 
 Every `last_boot.log` starts with a `machine:` line (CPU, threads, RAM,
 GPUs, distribution, kernel, desktop session, hardware tier), so a report
