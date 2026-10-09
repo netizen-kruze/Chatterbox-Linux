@@ -97,16 +97,25 @@ public class SttSettings
     // treats "ran before, no file" as a file that is momentarily invisible).
     public static bool FileExists => File.Exists(SettingsPath);
 
+    // Whether the data folder was there when the process started — the
+    // host records it first thing (Program), because the instance lock, the
+    // boot sentinel and the error log create the folder before the settings
+    // are loaded and would otherwise hide a folder the user deleted to reset
+    // the app. Unset (tests, or a host that never records it): looked up at
+    // load.
+    public static bool? DataDirExistedAtBoot { get; set; }
+
     // Load, waiting up to `budget` for a "missing" file to show up when this
     // user has run the app before (see ProvisionalDefaults). First runs
     // never wait.
     public static SttSettings LoadWithRetry(TimeSpan budget)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        // "Ran before" only counts when the data folder itself exists: a
-        // folder deleted to reset the app is a first run again, not a
-        // momentarily unmounted disk.
-        bool ranBefore = HasRunBefore() && Directory.Exists(Path.GetDirectoryName(SettingsPath)!);
+        // "Ran before" only counts when the data folder itself existed at
+        // boot: a folder deleted to reset the app is a first run again, not
+        // a momentarily unmounted disk.
+        bool dataDirExisted = DataDirExistedAtBoot ?? Directory.Exists(Path.GetDirectoryName(SettingsPath)!);
+        bool ranBefore = HasRunBefore() && dataDirExisted;
         while (true)
         {
             var s = Load();
@@ -204,7 +213,7 @@ public class SttSettings
     internal static void ResetForTests()
     {
         ProvisionalDefaults = false; _lastLoadMissing = false; LastLoadWaitMs = 0;
-        LastLoadSource = "not loaded"; HasRunBeforeOverride = null; Recovered = null;
+        LastLoadSource = "not loaded"; HasRunBeforeOverride = null; DataDirExistedAtBoot = null; Recovered = null;
     }
 
     public static SttSettings Load()

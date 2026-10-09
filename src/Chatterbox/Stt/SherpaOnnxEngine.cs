@@ -113,7 +113,7 @@ public sealed class SherpaOnnxEngine : ISttEngine
 
     // Parakeet's cost grows with the window: cap what one pass is handed
     // (the pipeline keeps the rest as the next window), so a slow CPU never
-    // faces a 28 s decode at Stop or at the end of a long sentence.
+    // faces a 28 s decode at the end of a long sentence.
     public int MaxWindowMs => 20_000;
 
     private SttTranscript TranscribeTimed(byte[] pcm, int length)

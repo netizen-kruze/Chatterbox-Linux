@@ -419,7 +419,24 @@ from any machine says what it ran on.
   version. New `--update` switch (the Updates screen from a terminal);
   `--uninstall --purge` also removes the host's unpacked native
   libraries under `~/.net/`; `build.sh` and `tools/smoke.sh` are
-  executable in the checkout.
+  executable in the checkout. Also a stability audit of the whole app: a
+  recognition pass that throws stops the session at once with
+  "recognition failed (…)", and Stop is quick (it no longer transcribes
+  what is left in the window); a CPU without AVX2/FMA gets the bundled
+  no-AVX Whisper build, so both engines run there; the crash marker
+  covers the whole run, so a crash during captions is recorded and the
+  next start does not walk back into it; the Translate tab says when the
+  Vulkan pack is not doing the work, and why; the microphone is chosen by
+  the name you see, so a stale list cannot pick another device; settings
+  survive a slow-mounting home folder in full; an in-app restart of a
+  Steam-launched instance still exits with VRChat; the engine pack
+  download resumes like the others, and the GPU pack no longer asks for
+  room in `/tmp` it does not use; deleting a model also removes a
+  half-downloaded file; a data folder deleted to reset the app reads as a
+  first run again; and the presence watcher's diagnostics (counts only,
+  never names) reach `last_boot.log`. `tools/scenarios.sh` and
+  `tools/soak.sh` run the checklist's no-VRChat scenarios and a long
+  stability soak.
 - **1.7.1** — **local translation**: Tencent's Hy-MT2 1.8B model through
   llama.cpp, fetched on demand as the model plus a CPU engine pack (four
   instruction-set variants, the best one for your processor is picked),

@@ -263,7 +263,8 @@ public class AppUpdaterTests : IDisposable
     private static void WriteScript(string path, string tag)
     {
         File.WriteAllText(path, RecordingScript(tag));
-        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (!OperatingSystem.IsWindows())   // a Linux build; the guard keeps the platform analyzer quiet
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
     // Runs the real helper (/bin/sh) and waits for it; the pid it waits

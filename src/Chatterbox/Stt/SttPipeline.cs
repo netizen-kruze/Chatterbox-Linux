@@ -30,9 +30,9 @@ public interface IVadSegmenter
 //
 // Falling behind: when a pass runs long, everything captured meanwhile waits
 // in the queue. The worker takes all of it before the next decision, so one
-// VAD tick and one pass cover the backlog instead of several partial ones,
-// and the queue holds a full minute so nothing is dropped short of a
-// hopeless stall.
+// VAD tick and one pass cover the backlog instead of several partial ones.
+// Past one window plus MaxLagMs of backlog the oldest audio is let go of
+// instead (load shedding — Shed): no later pass could caption it in time.
 public sealed class SttPipeline : IDisposable
 {
     public int UtteranceEndSilenceMs { get; init; } = 700;
@@ -183,7 +183,7 @@ public sealed class SttPipeline : IDisposable
                 // Catch-up: whatever arrived while the last pass ran is
                 // taken now, so one tick and one pass cover the backlog.
                 while (reader.TryRead(out var more)) Take(more);
-                if (_stopRequested) continue;   // drain only; the flush below is the last pass
+                if (_stopRequested) continue;   // drain only: Stop is under way, and nothing left in the window is transcribed (see below)
                 Shed();
                 if (_bytesSinceVad >= vadTickBytes)
                 {

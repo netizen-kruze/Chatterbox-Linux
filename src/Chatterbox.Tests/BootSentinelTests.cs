@@ -91,6 +91,19 @@ public class BootSentinelTests : IDisposable
     }
 
     [Fact]
+    public void AStopAfterTheCleanExitDoesNotBringTheMarkerBack()
+    {
+        // Main clears the marker, then the usings dispose the controller,
+        // whose Stop marks the window phase for a session that was running.
+        BootSentinel.Arm("1.7.2");
+        BootSentinel.Mark(BootSentinel.PhaseCaptions);
+        BootSentinel.Clear();
+        BootSentinel.Mark(BootSentinel.PhaseWindow);
+        Assert.False(File.Exists(_path));
+        Assert.Null(BootSentinel.Arm("1.7.2"));   // the next start: nothing to report
+    }
+
+    [Fact]
     public void MarkWithoutArmTouchesNothing()
     {
         BootSentinel.Mark(BootSentinel.PhaseCaptions);   // --bench, tests: never armed

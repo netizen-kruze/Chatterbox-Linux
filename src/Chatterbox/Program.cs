@@ -79,6 +79,11 @@ internal static class Program
         // data folder, an alternate VRChat log folder, and "treat VRChat as
         // running" so the auto-start path is exercised without the game.
         if (ArgValue(own, "--data-dir") is { } dataDir) SttPaths.DataDir = Path.GetFullPath(dataDir);
+        // Recorded before anything (the instance lock, the error log, the
+        // boot sentinel) can create the folder: a data folder deleted to
+        // reset the app must read as a first run, not as a settings file
+        // that is momentarily invisible (SttSettings.LoadWithRetry).
+        SttSettings.DataDirExistedAtBoot = Directory.Exists(SttPaths.DataDir);
         var vrchatLogDir = ArgValue(own, "--vrchat-log-dir");
         bool assumeGame = own.Contains("--assume-vrchat-running");
         if (ArgValue(own, "--capture-command") is { } captureCmd) SttAudioDevices.CaptureCommandOverride = captureCmd;

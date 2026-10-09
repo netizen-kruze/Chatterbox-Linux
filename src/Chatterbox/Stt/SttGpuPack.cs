@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -276,8 +277,11 @@ public static class SttGpuPack
         try
         {
             Directory.CreateDirectory(InstallDir);
-            SttDownload.EnsureFreeSpace(Path.GetTempPath(), plan.Max(p => p.Size));
-            SttDownload.EnsureFreeSpace(InstallDir, plan.Sum(p => p.ExtractedBytes) + 64_000_000);
+            // The parts are staged one at a time in the install folder (never
+            // /tmp — see FetchPartAsync) and each is deleted once extracted;
+            // bytes a previous attempt already staged count.
+            long staging = plan.Max(p => p.Size - StagedBytes(p));
+            SttDownload.EnsureFreeSpace(InstallDir, staging + plan.Sum(p => p.ExtractedBytes) + 64_000_000);
         }
         catch (Exception ex)
         {
@@ -296,11 +300,20 @@ public static class SttGpuPack
     // The archive is staged in the install folder itself, not /tmp: on
     // Fedora /tmp is RAM, and 440 MB there is 440 MB of memory. A network
     // failure keeps the staged file so the next attempt resumes it
-    // (SttDownload.ResumableDownloadAsync); a bad hash or a cancel drops it.
+    // (SttDownload.ResumableDownloadAsync); a bad hash, a cancel or a source
+    // that changed (the server refuses the resume: 416) drops it.
+    private static string StagedPath(PackPart part) => Path.Combine(InstallDir, part.Id + ".download");
+
+    private static long StagedBytes(PackPart part)
+    {
+        try { if (new FileInfo(StagedPath(part)) is { Exists: true } fi && fi.Length < part.Size) return fi.Length; } catch { }
+        return 0;
+    }
+
     private static async Task<(bool Ok, string? Error)> FetchPartAsync(
         PackPart part, Action<long> onProgress, CancellationToken ct)
     {
-        var temp = Path.Combine(InstallDir, part.Id + ".download");
+        var temp = StagedPath(part);
         bool keepTemp = false;
         try
         {
@@ -339,6 +352,12 @@ public static class SttGpuPack
         catch (OperationCanceledException)
         {
             return (false, "download cancelled");
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+        {
+            // The staged file is longer than what the server now has: it can
+            // never be continued, so it goes and the next try starts clean.
+            return (false, $"GPU pack ({part.Label}): download failed — the source changed; retry to download it afresh");
         }
         catch (Exception ex)
         {

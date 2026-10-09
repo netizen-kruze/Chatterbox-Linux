@@ -67,7 +67,7 @@ D="$(scenario s2)"; fakelog "$D/vr"; : > "$D/boot.inprogress"
 "$EXE" --data-dir "$D" --vrchat-log-dir "$D/vr" >"$D/a.out" 2>"$D/a.err" & A=$!
 sleep 8
 check "alive"                                        "$(alive $A)"
-check "boot log: previous start never reached the window" "$(has "$D/last_boot.log" 'previous start .*never reached the window')"
+check "boot log: previous run never reached the window" "$(has "$D/last_boot.log" 'previous run .*never reached the window')"
 check "error.log: PreviousStart entry"               "$(has "$D/error.log" 'PreviousStart')"
 check "page connected"                               "$(has "$D/last_boot.log" 'page connected')"
 stop $A

@@ -42,6 +42,23 @@ public class SttSettingsTests : IDisposable
         Assert.Empty(s.AutoStartFriends);
     }
 
+    // A data folder deleted to reset the app is a first run, even though the
+    // host recreated the folder (instance lock, boot sentinel, error log)
+    // before the settings were loaded: the host records at the very start
+    // whether it existed, and that is what counts.
+    [Fact]
+    public void DataFolderDeletedToReset_IsAFirstRun_EvenWhenRecreatedBeforeLoad()
+    {
+        SttSettings.HasRunBeforeOverride = true;    // the marker outside the folder says "ran before"
+        SttSettings.DataDirExistedAtBoot = false;   // ...but the folder was gone when the process started
+        Assert.True(Directory.Exists(_dir));         // and has been recreated since
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var s = SttSettings.LoadWithRetry(TimeSpan.FromSeconds(5));
+        Assert.True(sw.ElapsedMilliseconds < 1000);
+        Assert.False(SttSettings.ProvisionalDefaults);
+        Assert.Empty(s.AutoStartFriends);
+    }
+
     [Fact]
     public void ReturningUser_FileAppearsDuringWait_IsLoadedNormally()
     {

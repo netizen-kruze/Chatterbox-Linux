@@ -358,7 +358,7 @@ public sealed class PresenceWatcher : IDisposable
         }
         if (live && fresh)
         {
-            Say($"+ {who.Name} ({PlayerCount})");
+            Say($"a player joined ({PlayerCount} now)");
             PlayerJoined?.Invoke(who.Uid, who.Name);
         }
     }
@@ -384,7 +384,7 @@ public sealed class PresenceWatcher : IDisposable
         }
         if (live && known)
         {
-            Say($"- {who.Name} ({PlayerCount})");
+            Say($"a player left ({PlayerCount} now)");
             PlayerLeft?.Invoke(who.Uid, who.Name);
         }
     }
@@ -399,7 +399,7 @@ public sealed class PresenceWatcher : IDisposable
         ClearRoster();
         if (live)
         {
-            Say($"world: {location}");
+            Say($"world: {CurrentWorldId}");   // never the instance part: it can carry a user id
             WorldChanged?.Invoke(CurrentWorldId, location);
         }
     }
@@ -418,7 +418,7 @@ public sealed class PresenceWatcher : IDisposable
         if (!location.StartsWith("wrld_", StringComparison.Ordinal)) return;
         if (live)
         {
-            Say($"instance closed: {location}");
+            Say("instance closed");
             InstanceClosed?.Invoke(location);
         }
     }
@@ -509,6 +509,9 @@ public sealed class PresenceWatcher : IDisposable
     }
 
     private void ClearRoster() { lock (_gate) _roster.Clear(); }
+    // These lines end up in last_boot.log, which users attach to bug
+    // reports: counts and world ids only — never player names, user ids or
+    // instance ids (the same rule as DescribeLog).
     private void Say(string msg) => DebugLog?.Invoke("PresenceWatcher: " + msg);
 
     // For a condition that repeats every poll: said when it changes, not

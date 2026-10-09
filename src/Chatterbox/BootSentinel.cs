@@ -74,11 +74,15 @@ public static class BootSentinel
     }
 
     // A clean exit. Only this process's own marker is removed: a successor
-    // started by an in-app restart has armed its own by now.
+    // started by an in-app restart has armed its own by now. It is also
+    // final for this process: the controller is disposed after Main's Clear
+    // and stops a running session there, and that Stop must not write the
+    // marker back (the next start would report a crash that never was).
     public static void Clear()
     {
         lock (Gate)
         {
+            _version = null;
             try
             {
                 if (!File.Exists(FilePath)) return;

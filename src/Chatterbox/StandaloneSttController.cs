@@ -754,7 +754,7 @@ public sealed class StandaloneSttController : IDisposable
                     _settings.Save();
                 }
                 SendUpdateState(_updateState);
-                _send("toast", new { ok = true, msg = "Saved" });
+                SendSavedToast();   // a failed save says so, as on the Settings screen
                 break;
 
             // Settings > About: the license documents live inside the
@@ -1959,8 +1959,9 @@ public sealed class StandaloneSttController : IDisposable
     public void Dispose()
     {
         SttSettings.Recovered -= OnSettingsRecovered;
-        // A download in flight is cancelled cleanly (its .partial survives
-        // for a resume) instead of dying with the process mid-stream.
+        // A download in flight is cancelled (its cancel path removes the
+        // partial file, as a Cancel click does) instead of dying with the
+        // process mid-stream.
         try { _downloadCts?.Cancel(); } catch { }
         // A fallback tick racing this dispose must not start a session on
         // a controller that is going away.

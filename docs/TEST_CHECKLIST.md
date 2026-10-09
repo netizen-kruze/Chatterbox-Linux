@@ -321,8 +321,10 @@ Record results here with date + commit.
 - [ ] **Recorder dies mid-session** (kill pw-record/parec or the feeder):
       within ~5 s a red toast says captions stopped; Start works again;
       an auto-started session comes back by itself once the device is.
-- [ ] **Engine pass throws** (simulate: delete the model file while
-      running, then speak): the session stops with "recognition failed
+- [ ] **Engine pass throws** (no by-hand trigger: both engines hold the
+      model in memory, so deleting its file changes nothing — the unit
+      test AWorkerExceptionIsReportedNotSwallowed covers the path; if it
+      ever happens live): the session stops with "recognition failed
       (...)" instead of staying "running" in silence.
 - [ ] **Stop during a long pass** on a slow CPU (Parakeet): the app never
       crashes; the log may say "engine disposal deferred".
@@ -333,3 +335,15 @@ Record results here with date + commit.
       session summary is written (`exit requested by SIGTERM` in the log).
 - [ ] **Second launch** shows a "Chatterbox is already running" notification
       and exits.
+- [ ] **Download retry continues where it stopped**: cut the network in
+      the middle of a model, Parakeet engine or GPU pack download → the
+      toast ends in "(a retry continues where it stopped)" and the
+      `.partial` / `.download` file stays; download again → it continues
+      and verifies. Cancel instead → the file is removed; Delete on the
+      Models screen also removes a leftover partial. The GPU pack starts
+      even when `/tmp` (RAM on Fedora) is smaller than the pack.
+- [ ] **Data folder deleted to reset the app**: quit, delete
+      `~/.local/share/Chatterbox`, start → first-run screens at once
+      (`last_boot.log`: settings from "first run", no provisional wait),
+      even though `~/.config/Chatterbox/last-run-version` says it ran
+      before.

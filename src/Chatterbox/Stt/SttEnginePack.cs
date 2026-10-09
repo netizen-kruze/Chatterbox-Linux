@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -78,30 +79,44 @@ public static class SttEnginePack
         catch (Exception ex) { ErrorLog.WriteEntry("SttEnginePack.RegisterNativeResolver", ex); }
     }
 
+    // (receivedBytes, totalBytes) progress against the nupkg download.
+    // The archive is staged in the install folder itself, beside what it
+    // unpacks into. A network failure keeps the staged file so the next
+    // attempt resumes it (SttDownload.ResumableDownloadAsync); a bad hash, a
+    // cancel or a source that changed (the server refuses the resume: 416)
+    // drops it, and Delete removes a leftover.
+    private static string StagedPath => Path.Combine(InstallDir, Id + ".download");
+
     public static async Task<(bool Ok, string? Error)> DownloadAsync(
         Action<long, long> onProgress, CancellationToken ct = default)
     {
-        var tempNupkg = Path.Combine(Path.GetTempPath(), $"chatterbox-engine-pack-{Guid.NewGuid():N}.nupkg");
+        var tempNupkg = StagedPath;
+        // A folder that cannot be made or a full drive is not a download
+        // failure: nothing was fetched, so no "retry continues" promise.
         try
         {
-            using (var response = await Http.GetAsync(NupkgUrl, HttpCompletionOption.ResponseHeadersRead, ct))
+            Directory.CreateDirectory(InstallDir);
+            long have = 0;
+            try { if (new FileInfo(tempNupkg) is { Exists: true } fi && fi.Length < NupkgSizeBytes) have = fi.Length; } catch { }
+            // The rest of the archive, the unpacked libraries, and headroom.
+            SttDownload.EnsureFreeSpace(InstallDir, NupkgSizeBytes - have + Files.Sum(f => f.Size) + 16_000_000);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Engine pack: {ex.Message}");
+        }
+        bool keepTemp = false;
+        try
+        {
+            using (var sha = SHA256.Create())
             {
-                response.EnsureSuccessStatusCode();
-                SttDownload.EnsureFreeSpace(Path.GetTempPath(), NupkgSizeBytes);
-                SttDownload.EnsureFreeSpace(InstallDir, NupkgSizeBytes * 4);
-                using var sha = SHA256.Create();
-                await using (var source = await response.Content.ReadAsStreamAsync(ct))
-                await using (var target = File.Create(tempNupkg))
-                {
-                    await SttDownload.CopyAsync(source, target, sha, received => onProgress(received, NupkgSizeBytes), ct);
-                }
-
+                long received = await SttDownload.ResumableDownloadAsync(Http, NupkgUrl, tempNupkg, NupkgSizeBytes, sha,
+                    got => onProgress(got, NupkgSizeBytes), ct);
                 var hash = Convert.ToHexString(sha.Hash!).ToLowerInvariant();
-                if (hash != NupkgSha256)
+                if (received != NupkgSizeBytes || hash != NupkgSha256)
                     return (false, "Engine pack: package SHA-256 mismatch — download corrupt or source changed");
             }
 
-            Directory.CreateDirectory(InstallDir);
             using (var zip = ZipFile.OpenRead(tempNupkg))
             {
                 foreach (var file in Files)
@@ -129,13 +144,20 @@ public static class SttEnginePack
         {
             return (false, "download cancelled");
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+        {
+            // The staged file is longer than what the server now has: it can
+            // never be continued, so it goes and the next try starts clean.
+            return (false, "Engine pack: download failed — the source changed; retry to download it afresh");
+        }
         catch (Exception ex)
         {
-            return (false, $"Engine pack: download failed — {ex.Message}");
+            keepTemp = true;
+            return (false, $"Engine pack: download failed — {ex.Message} (a retry continues where it stopped)");
         }
         finally
         {
-            try { if (File.Exists(tempNupkg)) File.Delete(tempNupkg); } catch { }
+            try { if (!keepTemp && File.Exists(tempNupkg)) File.Delete(tempNupkg); } catch { }
         }
     }
 
@@ -162,7 +184,10 @@ public static class SttEnginePack
             {
                 var path = Path.Combine(InstallDir, f.Name);
                 if (File.Exists(path)) File.Delete(path);
+                if (File.Exists(path + ".partial")) File.Delete(path + ".partial");
             }
+            // A staged archive a failed download left for a resume.
+            if (File.Exists(StagedPath)) File.Delete(StagedPath);
             return true;
         }
         catch { return false; }
