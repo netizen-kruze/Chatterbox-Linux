@@ -126,11 +126,19 @@ and `~/.config/Chatterbox` away (restore after this section).
       preload), and it exits by itself when VRChat closes.
 - [ ] Crash recovery: with Chatterbox closed, create an empty
       `~/.local/share/Chatterbox/boot.inprogress`, then launch → a red
-      toast says the last start didn't finish, captions do NOT auto-start
-      (even with a watched player present), `last_boot.log` has the
-      "previous start … never reached the window" line and `error.log` a
-      "PreviousStart" entry (with the coredumpctl/journal lines when a
-      record exists). The launch after that is normal again.
+      toast says the last run "never reached the window", captions do NOT
+      auto-start (even with a watched player present), `last_boot.log`
+      has the "previous run … never reached the window" line and
+      `error.log` a "PreviousStart" entry (with the coredumpctl/journal
+      lines when a record exists). The launch after that is normal again.
+- [ ] Crash DURING captions (1.7.2: the marker lives for the whole run):
+      start captions, then `kill -9` the process → the next launch toasts
+      "ended while captions were running", does not auto-start, and logs
+      the SAFE BOOT line; while running, `boot.inprogress` ends in
+      `|window` when idle and `|captions` during a session, and is gone
+      after a clean close. `kill -9` of an IDLE window → the next launch
+      logs "ended without a clean exit while idle" and collects the crash
+      record, but auto-start works as normal (no safe boot).
 
 ## E. Coexistence
 
@@ -172,6 +180,16 @@ and `~/.config/Chatterbox` away (restore after this section).
       1.2 GB).
 - [ ] A copy run from a read-only folder (/opt): the packs still install,
       because they go to the data folder, not beside the binary.
+- [ ] GPU pack truthfulness (1.7.2): with the Vulkan pack installed but
+      `vulkaninfo` absent (`sudo dnf remove vulkan-tools`, or run with
+      `PATH` lacking it), the Translate banner says the pack is installed
+      but names `vulkan-tools`, the pack's install toast says the same,
+      Start toasts "Translation runs on the CPU — …", and `last_boot.log`'s
+      `translation:` line ends in "CPU (avx2…)" with "GPU pack not used".
+      With `vulkan-tools` installed the line says "Vulkan GPU" and the
+      "llama loader:" lines name `…/native/vulkan/libllama.so`. A pack
+      installed while a translator had already loaded in this run → the
+      toast and banner say "restart Chatterbox to use it".
 
 ## G. Other machines (any Linux desktop — no VRChat session needed)
 
@@ -201,8 +219,12 @@ and `~/.config/Chatterbox` away (restore after this section).
       within about a minute with "no data received", never hangs forever.
 - [ ] A filesystem with less free space than the model needs → the
       download refuses up front with a "not enough space" message.
-- [ ] A CPU without AVX2 → Start on Whisper fails with the AVX2 sentence;
-      Parakeet works.
+- [ ] A CPU without AVX2/FMA (1.7.2) → `last_boot.log` says "whisper
+      natives: this CPU lacks AVX2/FMA — the no-AVX build … is used",
+      `~/.local/share/Chatterbox/runtimes/noavx/linux-x64/` holds four
+      libraries, and Start works on BOTH engines (Whisper slowly, with
+      the loader line naming `CpuNoAvx`). Before 1.7.2 not even Parakeet
+      started there: the voice detector loads through whisper.cpp.
 
 ## F. Release file (ideally on the second machine)
 

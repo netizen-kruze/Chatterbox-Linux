@@ -73,6 +73,19 @@ check "page connected"                               "$(has "$D/last_boot.log" '
 stop $A
 check "sentinel cleared for the next start"          "$([ ! -e "$D/boot.inprogress" ] && echo 1 || echo 0)"
 
+echo "=== S2b: the previous run died while captions were running (marker in phase 'captions')"
+D="$(scenario s2b)"; fakelog "$D/vr"
+printf '1.7.2|%s|999999|captions' "$(date -u +%Y-%m-%dT%H:%M:%S.0000000Z)" > "$D/boot.inprogress"
+"$EXE" --data-dir "$D" --vrchat-log-dir "$D/vr" >"$D/a.out" 2>"$D/a.err" & A=$!
+sleep 8
+check "alive"                                        "$(alive $A)"
+check "boot log: ended while captions were running"  "$(has "$D/last_boot.log" 'ended while captions were running')"
+check "boot log: SAFE BOOT"                          "$(has "$D/last_boot.log" 'SAFE BOOT')"
+check "error.log: PreviousStart entry"               "$(has "$D/error.log" 'PreviousStart')"
+check "the marker now guards this run (phase window)" "$(grep -q -E '\|window$' "$D/boot.inprogress" 2>/dev/null && echo 1 || echo 0)"
+stop $A
+check "a clean exit removes the marker"              "$([ ! -e "$D/boot.inprogress" ] && echo 1 || echo 0)"
+
 echo "=== S3: VRChat 'running' but its log folder is missing"
 D="$(scenario s3)"
 "$EXE" --data-dir "$D" --vrchat-log-dir /nonexistent/vrchat --assume-vrchat-running >"$D/a.out" 2>"$D/a.err" & A=$!

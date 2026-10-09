@@ -93,6 +93,9 @@ public static class SttPaths
 
     public const string Rid = "linux-x64";
     public static string NativeDir => Path.Combine(RuntimeRoot, "runtimes", Rid);
+    // The no-AVX whisper build: Whisper.net probes runtimes/noavx/<rid>
+    // and loads it instead of the AVX2 build on a CPU without AVX2/FMA.
+    public static string NoAvxNativeDir => Path.Combine(RuntimeRoot, "runtimes", "noavx", Rid);
     public static string CudaDir => Path.Combine(RuntimeRoot, "runtimes", "cuda", Rid);
 
     // Always the data folder: a pack downloaded before "Add to app grid"

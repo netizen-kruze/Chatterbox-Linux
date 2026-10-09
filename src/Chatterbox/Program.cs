@@ -195,6 +195,10 @@ internal static class Program
         SttEnginePack.RegisterNativeResolver();
         SttGpuPack.PreloadRuntime();
         HookWhisperLoaderLog();
+        // The translation runtime's loader says which build it picked
+        // (vulkan or a CPU variant) — the only truthful source for the
+        // "runs on your GPU" claim.
+        LlamaTranslator.OnLoaderLog += line => BootLog.Append("llama loader: " + line);
 
         // Model/GPU-pack downloads identify this app by name and version.
         var ua = $"Chatterbox/{version}";
@@ -253,8 +257,9 @@ internal static class Program
         {
             if (running) { sawGame = true; return; }
             if (!withVrchat || !sawGame || _exiting) return;
-            _exiting = true;
-            CloseWindowOrExit();
+            // Like a SIGTERM: logged, through the window, with the hard
+            // exit backstop should the window thread never answer.
+            RequestExit("VRChat exiting (Steam launch-option mode)");
         };
 
         _ = RunUiDispatcherAsync();
@@ -278,12 +283,13 @@ internal static class Program
             SendToUi("toast", new { ok = true, msg = "Chatterbox " + updated });
         }
         if (unfinished != null)
-            BootLog.Append($"previous start ({unfinished.Version} at {unfinished.StartedAt:HH:mm:ss}, pid {unfinished.Pid}) " +
-                           "never reached the window — crashed or was killed. SAFE BOOT: captions won't auto-start " +
-                           "until Start is pressed; the crash record (coredumpctl/journal) goes to error.log");
+            BootLog.Append($"previous run ({unfinished.Version} started {unfinished.StartedAt:HH:mm:ss}, pid {unfinished.Pid}) " +
+                           $"{unfinished.How} — crashed or was killed" +
+                           (unfinished.WantsSafeBoot ? ". SAFE BOOT: captions won't auto-start until Start is pressed" : "") +
+                           "; the crash record (coredumpctl/journal) goes to error.log");
         SttSettings.MarkHasRun(version);
         ctrl.EnsureVoiceDetectorAtBoot();
-        ctrl.ArmBootReconcile(safeBoot: unfinished != null);
+        ctrl.ArmBootReconcile(safeBootReason: unfinished is { WantsSafeBoot: true } ? unfinished.How : null);
         ctrl.RestartRequested += RestartApp;
 
         // A page that never connects means a blank window (WebKitGTK
@@ -508,7 +514,8 @@ internal static class Program
         _exiting = true;
         BootLog.Append($"exit requested by {why}");
         CloseWindowOrExit();
-        _ = Task.Delay(10_000).ContinueWith(_ => { try { Environment.Exit(0); } catch { } });
+        // The backstop is a wanted exit, not a crash: the marker goes too.
+        _ = Task.Delay(10_000).ContinueWith(_ => { try { BootLog.Append("exit: hard exit after 10 s"); BootSentinel.Clear(); Environment.Exit(0); } catch { } });
     }
 
     private static void CloseWindowOrExit()
@@ -664,7 +671,7 @@ internal static class Program
         {
             BootLog.Append($"ui: page connected {Environment.TickCount64 - _bootTick} ms after start, " +
                            $"{ToUi.Reader.Count} queued message(s) released");
-            BootSentinel.Clear();   // this start made it — nothing to report next time
+            BootSentinel.Mark(BootSentinel.PhaseWindow);   // the start made it; the marker now guards the run
             ctrl.UiConnected();
         }
         try
@@ -781,27 +788,39 @@ internal static class Program
         MigrateRuntimes();
         try
         {
-            var dir = SttPaths.NativeDir;
-            Directory.CreateDirectory(dir);
             var asm = typeof(Program).Assembly;
-            const string prefix = "natives/" + SttPaths.Rid + "/";
-            foreach (var name in asm.GetManifestResourceNames())
+            // The AVX2/FMA build and the no-AVX build, each into the folder
+            // Whisper.net probes for it; the loader picks by what the CPU
+            // has (the no-AVX folder must EXIST for an older CPU not to be
+            // refused outright — see Chatterbox.csproj).
+            foreach (var (prefix, dir) in new[]
             {
-                if (!name.StartsWith(prefix, StringComparison.Ordinal)) continue;
-                var dest = Path.Combine(dir, name[prefix.Length..]);
-                // Written beside and renamed over: another instance (a
-                // --bench in a terminal, an update) keeps its mapped copy —
-                // truncating a mapped library in place is a SIGBUS.
-                var tmp = dest + ".tmp";
-                using (var src = asm.GetManifestResourceStream(name)!)
-                using (var dst = File.Create(tmp))
-                    src.CopyTo(dst);
-                File.Move(tmp, dest, overwrite: true);
+                ("natives/" + SttPaths.Rid + "/", SttPaths.NativeDir),
+                ("natives/noavx/" + SttPaths.Rid + "/", SttPaths.NoAvxNativeDir),
+            })
+            {
+                Directory.CreateDirectory(dir);
+                foreach (var name in asm.GetManifestResourceNames())
+                {
+                    if (!name.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                    var dest = Path.Combine(dir, name[prefix.Length..]);
+                    // Written beside and renamed over: another instance (a
+                    // --bench in a terminal, an update) keeps its mapped copy —
+                    // truncating a mapped library in place is a SIGBUS.
+                    var tmp = dest + ".tmp";
+                    using (var src = asm.GetManifestResourceStream(name)!)
+                    using (var dst = File.Create(tmp))
+                        src.CopyTo(dst);
+                    File.Move(tmp, dest, overwrite: true);
+                }
             }
             // Whisper.net expects an assembly path here and probes
             // <its directory>/runtimes/…; a directory would lose its last
             // segment, so the root is named through a file inside it.
             Whisper.net.LibraryLoader.RuntimeOptions.LibraryPath = Path.Combine(SttPaths.RuntimeRoot, "Chatterbox");
+            BootLog.Append("whisper natives: " + (Stt.WhisperNetEngine.CpuHasAvx
+                ? "AVX2+FMA present — the AVX build is used"
+                : $"this CPU lacks AVX2/FMA — the no-AVX build in {SttPaths.NoAvxNativeDir} is used (slower; Parakeet is the better engine here)"));
         }
         catch (Exception ex) { ErrorLog.WriteEntry("ExtractWhisperNatives", ex); }
     }

@@ -159,6 +159,7 @@ function renderDevices(p) {
     `<option value="${esc(l.code)}" ${l.code === p.translateTarget ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
   $('transStatus').textContent = p.translateReady
     ? (p.translateGpu ? 'Translation model and engine installed — runs on your GPU (Vulkan).' : 'Translation model and engine installed — runs on your CPU.')
+      + (p.translateNote ? ' ' + p.translateNote : '')
     : 'Needs the translation model and the engine pack from the Models screen.';
   $('transDot').className = 'dot ' + (p.translateReady ? 'ok' : 'warn');
   $('btnTransModels').hidden = !!p.translateReady;
@@ -624,7 +625,7 @@ if (DEMO) {
     autoStartFriends: [{ id: 'usr_2fa4aaaa-1111-2222-3333-4444555591c3', name: 'Nova_Signs' }, { id: '', name: 'Moth_man42' }],
     whisperAvailable: true, whisperModelName: 'ggml-large-v3-turbo.bin', whisperModels: ['ggml-large-v3-turbo.bin'],
     whisperModelSetting: '', vadAvailable: true, parakeetAvailable: true, modelDir: '',
-    translateEnabled: true, translateTarget: 'ja', translateShowOriginal: false, translateReady: true, translateGpu: true,
+    translateEnabled: true, translateTarget: 'ja', translateShowOriginal: false, translateReady: true, translateGpu: true, translateNote: '',
     translateLanguages: [{ code: 'ja', name: 'Japanese' }, { code: 'ko', name: 'Korean' }, { code: 'es', name: 'Spanish' }, { code: 'de', name: 'German' }] } }));
   onMessage(JSON.stringify({ type: 'sttPlayers', payload: { game: true, log: 'writing', world: 'wrld_demo', worldName: 'The Black Cat', players: [
     { id: 'usr_c48faaaa-0000-0000-0000-00000000a0c8', name: 'PixelFerret' },

@@ -147,12 +147,20 @@ public sealed class WhisperNetEngine : ISttEngine
         return string.Join(' ', parts);
     }
 
-    // The bundled whisper.cpp build is compiled for AVX2; on a CPU without it
-    // the load fails in a way that looks like a bad model file. Say why.
+    // Whisper.net's gate for its AVX build is the three together (AVX,
+    // AVX2, FMA); a CPU missing any of them gets the bundled no-AVX build
+    // from runtimes/noavx — the voice detector loads through the same
+    // library, so this decides Parakeet's start as well as Whisper's.
+    internal static bool CpuHasAvx =>
+        System.Runtime.Intrinsics.X86.Avx.IsSupported &&
+        System.Runtime.Intrinsics.X86.Avx2.IsSupported &&
+        System.Runtime.Intrinsics.X86.Fma.IsSupported;
+
+    // On such a CPU a load failure looks like a bad model file. Say why.
     internal static string AvxNote() =>
-        System.Runtime.Intrinsics.X86.Avx2.IsSupported
+        CpuHasAvx
             ? ""
-            : " — this CPU has no AVX2, which the bundled Whisper build needs; the Parakeet engine runs without it";
+            : $" — this CPU lacks AVX2/FMA, so the bundled no-AVX whisper build must be present in {SttPaths.NoAvxNativeDir} (it is unpacked at every start — check that folder can be written)";
 
     private void DisposeCore()
     {

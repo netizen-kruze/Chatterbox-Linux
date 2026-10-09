@@ -15,12 +15,86 @@ public class BootSentinelTests : IDisposable
         Directory.CreateDirectory(_dir);
         _path = Path.Combine(_dir, "boot.inprogress");
         BootSentinel.PathOverride = _path;
+        BootSentinel.ResetForTests();
     }
 
     public void Dispose()
     {
         BootSentinel.PathOverride = null;
+        BootSentinel.ResetForTests();
         try { Directory.Delete(_dir, recursive: true); } catch { }
+    }
+
+    [Fact]
+    public void ThePhaseFollowsTheRunAndIsReportedNextTime()
+    {
+        Assert.Null(BootSentinel.Arm("1.7.2"));
+        Assert.EndsWith("|boot", File.ReadAllText(_path));
+        BootSentinel.Mark(BootSentinel.PhaseWindow);
+        Assert.EndsWith("|window", File.ReadAllText(_path));
+        BootSentinel.Mark(BootSentinel.PhaseCaptions);
+        Assert.EndsWith("|captions", File.ReadAllText(_path));
+
+        // "The next start": the run above died with captions running.
+        BootSentinel.ResetForTests();
+        var previous = BootSentinel.Arm("1.7.2");
+        Assert.NotNull(previous);
+        Assert.Equal(BootSentinel.PhaseCaptions, previous!.Phase);
+        Assert.Equal("ended while captions were running", previous.How);
+        Assert.True(previous.WantsSafeBoot);
+        Assert.Equal(Environment.ProcessId, previous.Pid);
+    }
+
+    [Fact]
+    public void AnIdleWindowThatWasKilledIsReportedButDoesNotForceASafeBoot()
+    {
+        BootSentinel.Arm("1.7.2");
+        BootSentinel.Mark(BootSentinel.PhaseWindow);
+        BootSentinel.ResetForTests();
+        var previous = BootSentinel.Arm("1.7.2");
+        Assert.Equal(BootSentinel.PhaseWindow, previous!.Phase);
+        Assert.False(previous.WantsSafeBoot);
+        Assert.Contains("idle", previous.How);
+    }
+
+    [Fact]
+    public void AStartThatNeverReachedTheWindowStillReadsAsBefore()
+    {
+        BootSentinel.Arm("1.7.2");
+        BootSentinel.ResetForTests();
+        var previous = BootSentinel.Arm("1.7.2");
+        Assert.Equal(BootSentinel.PhaseBoot, previous!.Phase);
+        Assert.Equal("never reached the window", previous.How);
+        Assert.True(previous.WantsSafeBoot);
+    }
+
+    [Fact]
+    public void AMarkerFromBeforeThePhasesIsAStart()
+    {
+        File.WriteAllText(_path, "1.7.1|2026-10-08T20:00:00.0000000+00:00|4242");
+        var previous = BootSentinel.Arm("1.7.2");
+        Assert.Equal("1.7.1", previous!.Version);
+        Assert.Equal(4242, previous.Pid);
+        Assert.Equal(BootSentinel.PhaseBoot, previous.Phase);
+    }
+
+    [Fact]
+    public void ClearRemovesOnlyThisProcessesOwnMarker()
+    {
+        // A successor's marker (another pid) must survive the predecessor's late Clear.
+        File.WriteAllText(_path, "1.7.2|2026-10-09T05:00:00.0000000+00:00|99999|window");
+        BootSentinel.Clear();
+        Assert.True(File.Exists(_path));
+        BootSentinel.Arm("1.7.2");               // ours now
+        BootSentinel.Clear();
+        Assert.False(File.Exists(_path));
+    }
+
+    [Fact]
+    public void MarkWithoutArmTouchesNothing()
+    {
+        BootSentinel.Mark(BootSentinel.PhaseCaptions);   // --bench, tests: never armed
+        Assert.False(File.Exists(_path));
     }
 
     [Fact]

@@ -165,7 +165,11 @@ optional **GPU acceleration for translation (Vulkan)** pack (21 MB) makes
 it several times faster. It runs through your distribution's Vulkan loader
 and your GPU driver's Vulkan support (`vulkan-loader` plus the driver's
 ICD — Mesa for AMD and Intel, the NVIDIA driver's own on NVIDIA), with no
-CUDA runtime involved.
+CUDA runtime involved — and it needs the `vulkaninfo` tool (`sudo dnf
+install vulkan-tools`), which the translation runtime runs to find the
+GPU; without it the pack is silently not used. The Translate banner and
+`last_boot.log`'s `translation:` line say which build is really doing the
+work, and tell you when that tool is missing.
 
 The **Translate** tab is where it all lives: a banner that says whether
 the model and engine are installed (with an **Open Models** button when
@@ -199,8 +203,10 @@ was also accurate. The picker lists the languages it does best.
   session. Packages: `gtk3`, `libnotify`, `webkit2gtk4.1` (the window),
   `pipewire-utils` (the microphone; `pulseaudio-utils` or ALSA's `arecord`
   work as fallbacks).
-- A CPU with AVX2 (any desktop CPU from the last decade) for the Whisper
-  engine; Parakeet runs without it.
+- Any x86-64 CPU. With AVX2 and FMA (any desktop CPU from the last
+  decade) Whisper runs at full speed; without them the bundled no-AVX
+  build is used (slower — Parakeet is the better engine there, and
+  `last_boot.log`'s "whisper natives" line says which build is in use).
 - VRChat through Steam (Proton). Presence detection reads the game's log
   inside its Proton prefix and sees the game as the `VRChat.exe` process.
 - A microphone. VRChat keeps using it at the same time — PipeWire shares
@@ -304,10 +310,15 @@ translation.
   toast and the `translation:` line in `last_boot.log`; a failed load
   falls back to untranslated captions rather than stopping them.
 - **The Vulkan translation pack is installed but translation runs on the
-  CPU** (or fails to load): the GPU path needs the Vulkan loader and your
-  driver's Vulkan ICD — on Fedora `vulkan-loader` plus
+  CPU** (or fails to load): the Translate banner and the `translation:`
+  line in `last_boot.log` say why. The usual cause is the missing
+  `vulkaninfo` tool (`sudo dnf install vulkan-tools`): the runtime runs
+  it to find a Vulkan GPU and quietly uses the CPU build without it. A
+  pack installed while translation was already running in this session
+  needs a restart. Beyond that the GPU path needs the Vulkan loader and
+  your driver's Vulkan ICD — on Fedora `vulkan-loader` plus
   `mesa-vulkan-drivers` (AMD, Intel) or the NVIDIA driver's own Vulkan
-  library. `vulkaninfo --summary` (package `vulkan-tools`) shows whether a
+  library. `vulkaninfo --summary` shows whether a
   device is visible. Without one the engine falls back to the CPU build.
 - **Settings or players missing after a launch**: check `last_boot.log` —
   it records which settings file was read and how many auto-start players
@@ -319,13 +330,15 @@ translation.
   to Parakeet, use a smaller Whisper model, install GPU acceleration, or
   restart to activate it. `last_boot.log` records every session's pace
   (passes, average and worst pass time, worst lag) for bug reports.
-- **Chatterbox crashed or vanished**: the next start notices (a
-  `boot.inprogress` marker survived), copies the crash record from
-  `coredumpctl` and the journal into `error.log`, and runs a safe boot —
-  captions are not auto-started until you press Start once, so a crash can
-  never loop.
-- **Whisper won't load on an old CPU**: the bundled build needs AVX2; the
-  error says so. Use the Parakeet engine.
+- **Chatterbox crashed or vanished**: the next start notices (the
+  `boot.inprogress` marker survived, and says whether the run died while
+  starting, idle, or with captions running), copies the crash record from
+  `coredumpctl` and the journal into `error.log`, and — unless the window
+  was merely idle when it was killed — runs a safe boot: captions are not
+  auto-started until you press Start once, so a crash can never loop.
+- **An old CPU without AVX2/FMA**: the bundled no-AVX whisper build is
+  used automatically (`last_boot.log`'s "whisper natives" line says so).
+  It is slower; Parakeet is the better engine on such a machine.
 - **"Captions stopped — microphone capture failed"** or **"recognition
   failed"**: the microphone vanished (unplugged, PipeWire restarted) or an
   engine pass threw. Press Start again; auto-started captions retry on

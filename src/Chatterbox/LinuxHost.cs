@@ -191,6 +191,26 @@ public static class LinuxHost
         catch { return false; } // not installed
     }
 
+    // Where a command-line tool is, searching PATH as a shell would; null
+    // when it is not installed. For tools a library runs behind our back
+    // (LLamaSharp detects Vulkan by running vulkaninfo).
+    public static string? ToolOnPath(string name, string? pathVariable = null)
+    {
+        try
+        {
+            var path = pathVariable ?? Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (var dir in path.Split(':', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var candidate = Path.Combine(dir, name);
+                if (!File.Exists(candidate)) continue;
+                if (!OperatingSystem.IsLinux() || (File.GetUnixFileMode(candidate) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)
+                    return candidate;
+            }
+        }
+        catch { }
+        return null;
+    }
+
     // ── child processes ────────────────────────────────────────────
 
     // Runs a tool and returns its stdout, "" when it is missing, fails or

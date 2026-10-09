@@ -54,6 +54,12 @@
          places them in runtimes/linux-x64 at boot — a probed path, the
          same layout the CUDA pack installs into. -->
     <PackageReference Include="Whisper.net.Runtime" Version="$(WhisperNetVersion)" ExcludeAssets="all" />
+    <!-- The same whisper.cpp built without AVX (~2.4 MB more in the binary):
+         Whisper.net refuses to load its AVX2/FMA build on a CPU without
+         those instructions unless a noavx runtime folder exists — and the
+         voice detector loads through the same library, so without this
+         even Parakeet could not start on an older CPU. -->
+    <PackageReference Include="Whisper.net.Runtime.NoAvx" Version="$(WhisperNetVersion)" ExcludeAssets="all" />
     <PackageReference Include="org.k2fsa.sherpa.onnx" Version="$(SherpaOnnxVersion)" />
     <!-- The 31 MB linux-x64 natives ship via the in-app engine pack instead
          (SttEnginePack); excluding them here keeps the package small. -->
@@ -99,11 +105,19 @@
     <EmbeddedResource Include="$(NuGetPackageRoot)whisper.net.runtime/$(WhisperNetVersion)/build/linux-x64/*.so">
       <LogicalName>natives/linux-x64/%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
+    <!-- The no-AVX build, unpacked into runtimes/noavx/linux-x64 where
+         Whisper.net's loader looks for it (used only on a CPU without
+         AVX2/FMA; on any other its folder is merely there). -->
+    <EmbeddedResource Include="$(NuGetPackageRoot)whisper.net.runtime.noavx/$(WhisperNetVersion)/build/linux-x64/*.so">
+      <LogicalName>natives/noavx/linux-x64/%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <Target Name="EnsureWhisperNatives" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(NuGetPackageRoot)whisper.net.runtime/$(WhisperNetVersion)/build/linux-x64/libwhisper.so')"
            Text="Whisper.net.Runtime $(WhisperNetVersion) linux-x64 natives not found in the NuGet cache — run a package restore first." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)whisper.net.runtime.noavx/$(WhisperNetVersion)/build/linux-x64/libwhisper.so')"
+           Text="Whisper.net.Runtime.NoAvx $(WhisperNetVersion) linux-x64 natives not found in the NuGet cache — run a package restore first." />
   </Target>
 
   <ItemGroup>

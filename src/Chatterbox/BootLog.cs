@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Chatterbox.Stt;
@@ -16,6 +17,13 @@ namespace Chatterbox;
 public static class BootLog
 {
     private static string Dir => SttPaths.DataDir;
+    private static readonly object Gate = new();
+    // Lines appended before Write — the natives being moved, the whisper
+    // loader's say, the presence watcher's catch-up — used to vanish when
+    // Write replaced the file. They are kept here and written after the
+    // header (a process that never calls Write, --bench, appends to the
+    // previous boot's file as before).
+    private static List<string>? _early = new();
 
     public static void Write(string version, string[] args, SttSettings settings, bool gameRunning, string machine, string vrchatLogDir, string vrchatLog, string runtimeRoot)
     {
@@ -42,14 +50,26 @@ public static class BootLog
                 $"vrchat log:     {vrchatLog}",
                 $"runtimes:       {Path.Combine(runtimeRoot, "runtimes")}",
             };
-            File.WriteAllLines(Path.Combine(Dir, "last_boot.log"), lines);
+            lock (Gate)
+            {
+                File.WriteAllLines(Path.Combine(Dir, "last_boot.log"), lines.Concat(_early ?? Enumerable.Empty<string>()));
+                _early = null;
+            }
         }
         catch { /* diagnostics must never affect startup */ }
     }
 
     public static void Append(string line)
     {
-        try { File.AppendAllText(Path.Combine(Dir, "last_boot.log"), $"{DateTime.Now:HH:mm:ss} {line}" + Environment.NewLine); }
+        var stamped = $"{DateTime.Now:HH:mm:ss} {line}";
+        try
+        {
+            lock (Gate)
+            {
+                _early?.Add(stamped);
+                File.AppendAllText(Path.Combine(Dir, "last_boot.log"), stamped + Environment.NewLine);
+            }
+        }
         catch { }
     }
 }

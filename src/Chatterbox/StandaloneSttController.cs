@@ -224,19 +224,23 @@ public sealed class StandaloneSttController : IDisposable
     // window back. A fallback timer runs it anyway if the page never shows
     // up. A safe boot (the previous start died before the window) skips
     // it: a crash loop must need a human to press Start.
-    public void ArmBootReconcile(bool safeBoot)
+    // safeBootReason: how the previous run ended (BootSentinel.Unfinished.How)
+    // when that must keep captions from auto-starting; null for a normal boot.
+    public void ArmBootReconcile(string? safeBootReason)
     {
-        _safeBoot = safeBoot;
-        if (safeBoot) { _bootReconcileDone = 1; return; }
+        _safeBoot = safeBootReason != null;
+        _safeBootReason = safeBootReason;
+        if (_safeBoot) { _bootReconcileDone = 1; return; }
         _bootFallback = new System.Threading.Timer(_ => RunBootReconcile("fallback timer"), null, BootFallbackMs, Timeout.Infinite);
     }
+    private string? _safeBootReason;
 
     // The host calls this on the page's first message (window thread).
     public void UiConnected()
     {
         if (_safeBoot)
             _send("toast", new { ok = false, msg =
-                "Chatterbox didn't start cleanly last time, so captions were not auto-started this time — " +
+                $"The last run of Chatterbox {_safeBootReason} (it crashed or was killed), so captions were not auto-started this time — " +
                 "press Start when ready. Details: " + Path.Combine(SttPaths.DataDir, "error.log") });
         // A first run that never touches a setting would otherwise make every
         // later launch wait for a "missing" settings file (the provisional-
@@ -469,6 +473,17 @@ public sealed class StandaloneSttController : IDisposable
     }
 
     // ── translation ──────────────────────────────────────────────────────
+
+    // Why the installed GPU pack is not (yet) the one doing the work, for
+    // the Translate banner and the pack's install toast; "" when it is.
+    private static string TranslateGpuNote()
+    {
+        if (!SttTranslatePacks.Gpu.IsInstalled()) return "";
+        if (!LlamaTranslator.VulkanProbePresent) return "GPU pack installed, but " + LlamaTranslator.VulkanProbeNote + " — translation runs on the CPU until then.";
+        if (LlamaTranslator.NativeConfigured && !LlamaTranslator.ConfiguredWithVulkan) return "GPU pack installed — restart Chatterbox to use it.";
+        return "";
+    }
+
     private static bool TranslateReady(SttModelManager models) =>
         SttTranslatePacks.Cpu.IsInstalled() && models.IsInstalled(SttModelCatalog.Translation);
 
@@ -510,8 +525,13 @@ public sealed class StandaloneSttController : IDisposable
                 return;
             }
             _translator = translator;
+            // What the loader actually bound, not what is installed.
             BootLog.Append($"translation: {Path.GetFileName(translator.ModelPath)} loaded in {translator.LoadMs} ms " +
-                           $"({(gpu ? "Vulkan GPU" : $"CPU, {translator.Threads} threads")}) → {LlamaTranslator.LanguageName(_settings.TranslateTarget)}");
+                           $"({translator.Backend}) → {LlamaTranslator.LanguageName(_settings.TranslateTarget)}" +
+                           (translator.GpuUnavailableReason != null ? $"; GPU pack not used: {translator.GpuUnavailableReason}" : ""));
+            if (gpu && !translator.GpuActive)
+                _send("toast", new { ok = false, msg = "Translation runs on the CPU — " +
+                    (translator.GpuUnavailableReason ?? "the Vulkan build did not load (see last_boot.log's llama loader lines)") });
         }
         var tr = _translator;
         relay.ShowOriginal = _settings.TranslateShowOriginal;
@@ -1203,8 +1223,9 @@ public sealed class StandaloneSttController : IDisposable
                                 _send("sttModelProgress", new { id, received, total });
                             }, packCt);
                             ReleaseDownload(id);
+                            var note = ok && ReferenceEquals(pack, SttTranslatePacks.Gpu) ? TranslateGpuNote() : "";
                             _send("toast", ok
-                                ? new { ok = true, msg = $"{pack.DisplayName} installed" }
+                                ? new { ok = note.Length == 0, msg = $"{pack.DisplayName} installed" + (note.Length > 0 ? " — " + note : "") }
                                 : new { ok = false, msg = error ?? "download failed" });
                             SendModels();
                             SendDevices();
@@ -1411,6 +1432,7 @@ public sealed class StandaloneSttController : IDisposable
         _loading = false;
         _sessionStartedAt = Environment.TickCount64;
         _lastMemoryLoggedAt = _sessionStartedAt;
+        BootSentinel.Mark(BootSentinel.PhaseCaptions);   // a crash from here on is a crash DURING captions
         SendState();
 
         // Whisper on the CPU: say so at once, with the one-click fix for
@@ -1451,6 +1473,7 @@ public sealed class StandaloneSttController : IDisposable
             _translator = null;
             _service?.Dispose();
             _service = null;
+            BootSentinel.Mark(BootSentinel.PhaseWindow);
             SendState();
             _meterPct = -1;
             _send("sttMeter", new { level = 0f });
@@ -1549,6 +1572,11 @@ public sealed class StandaloneSttController : IDisposable
         if (line.Contains("error", StringComparison.OrdinalIgnoreCase) ||
             line.Contains("did not exit", StringComparison.OrdinalIgnoreCase))
             ErrorLog.WriteNote("Stt", line);
+        // The two events a report needs to see: audio shed to catch up, and
+        // an engine freed late because a pass was still running at Stop.
+        else if (line.Contains("skipped", StringComparison.Ordinal) && line.Contains("to catch up", StringComparison.Ordinal) ||
+                 line.Contains("disposal deferred", StringComparison.Ordinal))
+            BootLog.Append(line);
     }
 
     private void MeterTick()
@@ -1623,7 +1651,12 @@ public sealed class StandaloneSttController : IDisposable
             translateTarget = _settings.TranslateTarget,
             translateShowOriginal = _settings.TranslateShowOriginal,
             translateReady = TranslateReady(_models),
-            translateGpu = SttTranslatePacks.Gpu.IsInstalled(),
+            // "Runs on your GPU" only when it can: the pack AND the tool
+            // LLamaSharp detects Vulkan with, and not already bound to the
+            // CPU build in this run.
+            translateGpu = SttTranslatePacks.Gpu.IsInstalled() && LlamaTranslator.VulkanProbePresent &&
+                           !(LlamaTranslator.NativeConfigured && !LlamaTranslator.ConfiguredWithVulkan),
+            translateNote = TranslateGpuNote(),
             translateLanguages = LlamaTranslator.Languages.Select(l => new { code = l.Code, name = l.Name }),
             parakeetAvailable = SttEnginePack.IsInstalled() && _models.IsInstalled(SttModelCatalog.Find(SttModelCatalog.ParakeetId)!),
             modelDir = SttPaths.ModelDir,

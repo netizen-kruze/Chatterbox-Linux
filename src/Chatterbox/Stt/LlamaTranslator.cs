@@ -44,7 +44,27 @@ public sealed class LlamaTranslator : IDisposable
     public static string Instruction(string text, string targetCode) =>
         $"Translate the following text into {LanguageName(targetCode)}. Only output the translated result, without any additional explanation:\n{text}";
 
-    private static int _nativeConfigured; // NativeLibraryConfig is per process and must precede the first load
+    // NativeLibraryConfig is per process and must precede the first load:
+    // whether Vulkan was asked for is decided once, by the first translator.
+    private static bool? _configuredWithVulkan;
+    public static bool NativeConfigured => _configuredWithVulkan != null;
+    public static bool ConfiguredWithVulkan => _configuredWithVulkan == true;
+
+    // LLamaSharp detects Vulkan by running `vulkaninfo --summary` — with no
+    // such tool on PATH it silently loads the CPU build, however good the
+    // GPU and its driver are. Fedora ships it in vulkan-tools.
+    public static bool VulkanProbePresent => LinuxHost.ToolOnPath("vulkaninfo") != null;
+    public const string VulkanProbeNote =
+        "the Vulkan runtime cannot be detected without the vulkaninfo tool (sudo dnf install vulkan-tools)";
+
+    // What the loader said it loaded, from its own log — the one truthful
+    // source for "runs on the GPU". Lines are also handed to OnLoaderLog
+    // for the boot log, capped.
+    public static string? LoadedLibrary { get; private set; }
+    public static string LoadedVariant => ParseVariant(LoadedLibrary);
+    public static event Action<string>? OnLoaderLog;
+    private static int _loaderLines;
+
     private LLamaWeights? _model;
     private StatelessExecutor? _executor;
     private ModelParams? _params;
@@ -54,6 +74,39 @@ public sealed class LlamaTranslator : IDisposable
     public int Threads { get; }
     public bool IsLoaded => _executor != null;
     public long LoadMs { get; private set; }
+    // Why the GPU was asked for but is not doing the work, or null.
+    public string? GpuUnavailableReason { get; private set; }
+    public bool GpuActive => UseGpu && GpuUnavailableReason == null && LoadedVariant == "vulkan";
+    public string Backend => GpuActive ? "Vulkan GPU" : $"CPU ({(LoadedVariant.Length > 0 ? LoadedVariant : "?")}), {Threads} threads";
+
+    // "…/runtimes/linux-x64/native/vulkan/libllama.so" → "vulkan";
+    // "…/native/avx2/libllama.so" → "avx2"; anything else → "".
+    internal static string ParseVariant(string? loadedPath)
+    {
+        if (string.IsNullOrEmpty(loadedPath)) return "";
+        var p = loadedPath.Replace('\\', '/');
+        int i = p.IndexOf("/native/", StringComparison.Ordinal);
+        if (i < 0) return "";
+        var rest = p[(i + "/native/".Length)..];
+        int slash = rest.IndexOf('/');
+        return slash < 0 ? "" : rest[..slash];
+    }
+
+    // The loader's "Successfully loaded '<path>'" names the library that
+    // is now in the process; dependencies and failures are logged too.
+    internal static void NoteLoaderLine(string message)
+    {
+        var m = (message ?? "").Trim();
+        if (m.Length == 0) return;
+        const string loaded = "Successfully loaded '";
+        if (m.StartsWith(loaded, StringComparison.Ordinal) && m.EndsWith("'", StringComparison.Ordinal))
+            LoadedLibrary = m[loaded.Length..^1];
+        if (!(m.Contains("loaded", StringComparison.OrdinalIgnoreCase) || m.Contains("Failed", StringComparison.Ordinal))) return;
+        if (Interlocked.Increment(ref _loaderLines) > 30) return;
+        OnLoaderLog?.Invoke(m);
+    }
+
+    internal static void ResetForTests() { LoadedLibrary = null; _loaderLines = 0; }
 
     public LlamaTranslator(string modelPath, bool useGpu, int? threads = null)
     {
@@ -69,17 +122,32 @@ public sealed class LlamaTranslator : IDisposable
         if (!File.Exists(ModelPath)) { error = $"translation model not found at '{ModelPath}'"; return false; }
         try
         {
-            if (Interlocked.Exchange(ref _nativeConfigured, 1) == 0)
+            bool wantGpu = UseGpu;
+            if (wantGpu && !VulkanProbePresent)
             {
-                // The packs live under the runtime root (the data folder, like
-                // every other native here), not beside the binary — a single
-                // file under /opt or ~/Downloads has no writable neighbour.
-                NativeLibraryConfig.All
-                    .WithSearchDirectory(SttPaths.RuntimeRoot)
-                    .WithVulkan(UseGpu)
-                    .WithCuda(false)
-                    .WithAutoFallback(true)
-                    .WithLogCallback((_, _) => { });
+                GpuUnavailableReason = VulkanProbeNote;
+                wantGpu = false;
+            }
+            lock (SttAudio.NativeLoadLock)
+            {
+                if (_configuredWithVulkan == null)
+                {
+                    // The packs live under the runtime root (the data folder, like
+                    // every other native here), not beside the binary — a single
+                    // file under /opt or ~/Downloads has no writable neighbour.
+                    NativeLibraryConfig.All
+                        .WithSearchDirectory(SttPaths.RuntimeRoot)
+                        .WithVulkan(wantGpu)
+                        .WithCuda(false)
+                        .WithAutoFallback(true)
+                        .WithLogCallback((_, message) => NoteLoaderLine(message));
+                    _configuredWithVulkan = wantGpu;
+                }
+                else if (wantGpu && _configuredWithVulkan == false)
+                {
+                    // The native library is bound once per process.
+                    GpuUnavailableReason = "the translation runtime was already loaded without Vulkan in this run — restart Chatterbox to use the GPU";
+                }
             }
             var sw = Stopwatch.StartNew();
             lock (SttAudio.NativeLoadLock)
@@ -87,7 +155,7 @@ public sealed class LlamaTranslator : IDisposable
                 _params = new ModelParams(ModelPath)
                 {
                     ContextSize = 1024,
-                    GpuLayerCount = UseGpu ? 999 : 0,
+                    GpuLayerCount = UseGpu && GpuUnavailableReason == null ? 999 : 0,
                     Threads = Threads,
                     BatchThreads = Threads,
                 };
