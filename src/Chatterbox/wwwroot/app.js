@@ -608,7 +608,9 @@ if (DEMO) {
     intervalMs: 1000, typingIndicator: true, autoStartEnabled: true,
     autoStartFriends: [{ id: 'usr_2fa4aaaa-1111-2222-3333-4444555591c3', name: 'Nova_Signs' }, { id: '', name: 'Moth_man42' }],
     whisperAvailable: true, whisperModelName: 'ggml-large-v3-turbo.bin', whisperModels: ['ggml-large-v3-turbo.bin'],
-    whisperModelSetting: '', vadAvailable: true, parakeetAvailable: true, modelDir: '' } }));
+    whisperModelSetting: '', vadAvailable: true, parakeetAvailable: true, modelDir: '',
+    translateEnabled: true, translateTarget: 'ja', translateShowOriginal: false, translateReady: true, translateGpu: true,
+    translateLanguages: [{ code: 'ja', name: 'Japanese' }, { code: 'ko', name: 'Korean' }, { code: 'es', name: 'Spanish' }, { code: 'de', name: 'German' }] } }));
   onMessage(JSON.stringify({ type: 'sttPlayers', payload: { game: true, log: 'writing', world: 'wrld_demo', worldName: 'The Black Cat', players: [
     { id: 'usr_c48faaaa-0000-0000-0000-00000000a0c8', name: 'PixelFerret' },
     { id: 'usr_2fa4aaaa-1111-2222-3333-4444555591c3', name: 'Nova_Signs' },
@@ -619,8 +621,11 @@ if (DEMO) {
     { id: 'large-v3-turbo-q5', displayName: 'Whisper large-v3-turbo (q5)', sizeBytes: 574e6, license: 'MIT', attribution: 'OpenAI / whisper.cpp', installed: false, active: false, isVad: false },
     { id: 'tiny.en-q5', displayName: 'Whisper tiny.en (q5)', sizeBytes: 32e6, license: 'MIT', attribution: 'OpenAI / whisper.cpp', installed: false, active: false, isVad: false },
     { id: 'vad', displayName: 'Silero VAD v6.2.0', sizeBytes: 885098, license: 'MIT', attribution: 'snakers4 / ggml-org', installed: true, active: false, isVad: true },
-    { id: 'cuda-gpu-pack', displayName: 'GPU acceleration for Whisper (CUDA)', sizeBytes: 142586522, license: 'MIT', attribution: 'whisper.cpp CUDA build, packaged by Whisper.net', installed: false, active: false, isVad: false }] } }));
-  onMessage(JSON.stringify({ type: 'sttState', payload: { running: true, engineName: 'whisper.cpp (ggml-large-v3-turbo, Cuda)' } }));
+    { id: 'hy-mt2-1.8b', displayName: 'Hy-MT2 1.8B translation model (Q4)', sizeBytes: 1133080448, license: 'Apache-2.0', attribution: 'Tencent Hunyuan Hy-MT2 1.8B (Apache-2.0), GGUF by Tencent', installed: true, active: false, isVad: false, kind: 'translation' },
+    { id: 'cuda-gpu-pack', displayName: 'GPU acceleration for Whisper (CUDA)', sizeBytes: 142586522, license: 'MIT', attribution: 'whisper.cpp CUDA build, packaged by Whisper.net', installed: false, active: false, isVad: false },
+    { id: 'translate-engine', displayName: 'Translation engine (llama.cpp, CPU)', sizeBytes: 36337071, license: 'MIT', attribution: 'llama.cpp (MIT, ggml-org), packaged by LLamaSharp (MIT)', installed: true, active: false, isVad: false, kind: 'pack' },
+    { id: 'translate-gpu-pack', displayName: 'GPU acceleration for translation (Vulkan)', sizeBytes: 20194168, license: 'MIT', attribution: 'llama.cpp Vulkan build (MIT, ggml-org), packaged by LLamaSharp (MIT)', installed: true, active: false, isVad: false, kind: 'pack' }] } }));
+  onMessage(JSON.stringify({ type: 'sttState', payload: { running: true, engineName: 'Whisper.net (ggml-large-v3-turbo, Cuda)' } }));
   onMessage(JSON.stringify({ type: 'sttPartial', payload: { committed: 'They said the new area opens on the left', pending: 'past the fountain' } }));
   onMessage(JSON.stringify({ type: 'sttSpeech', payload: { active: true } }));
   onMessage(JSON.stringify({ type: 'sttMeter', payload: { level: 0.52 } }));
@@ -628,11 +633,14 @@ if (DEMO) {
   onMessage(JSON.stringify({ type: 'sttModelProgress', payload: { id: 'large-v3-turbo-q5', received: 368e6, total: 574e6 } }));
   $('capOlder').textContent = 'Sure, we can head over there in a minute.';
   $('capOlder').hidden = false;
+  onMessage(JSON.stringify({ type: 'sttTranslated', payload: { original: 'Sure, we can head over there in a minute.', translated: 'いいよ、少ししたらそっちに向かおう。' } }));
   onMessage(JSON.stringify({ type: 'sttUpdate', payload: { state: 'available', current: '1.6.0', configured: true, checkAtStartup: true,
     latest: '1.6.1', title: 'Chatterbox 1.6.1 for Linux', pageUrl: '', size: 39.7e6, received: 0, total: 0,
     notes: 'Live local speech-to-text captions for the VRChat chatbox. Linux x64, one self-contained file.\nSHA-256: 0000000000000000000000000000000000000000000000000000000000000000' } }));
-  onMessage(JSON.stringify({ type: 'sttDocs', payload: { version: '1.2.0',
+  onMessage(JSON.stringify({ type: 'sttDocs', payload: { version: '1.7.1',
     readme: '# Chatterbox\n\nLive captions for VRChat. (Demo preview text.)',
     license: 'MIT License. (Demo preview text.)',
     notice: 'Third-party notices. (Demo preview text.)' } }));
+  const demoView = new URLSearchParams(location.search).get('view');
+  if (demoView) showView(demoView);
 }

@@ -180,6 +180,8 @@ simply run untranslated and a toast says why. The recognition engine and
 Whisper model selectors live on the Models screen under **In use** (moved
 there from Settings).
 
+![The Translate tab](docs/screenshot-translate.png)
+
 The packs install under `~/.local/share/Chatterbox/runtimes/linux-x64/native/`
 (one folder per instruction-set variant; the loader picks the best one for
 your processor) and are hash-verified like everything else; `last_boot.log`
