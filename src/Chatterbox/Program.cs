@@ -518,9 +518,12 @@ internal static class Program
         if (_exiting) return;
         _exiting = true;
         BootLog.Append($"exit requested by {why}");
-        CloseWindowOrExit();
         // The backstop is a wanted exit, not a crash: the marker goes too.
+        // Armed BEFORE the window is asked to close: that request waits for
+        // the window thread, and a window thread that never answers — the
+        // case the backstop exists for — would otherwise hold it forever.
         _ = Task.Delay(10_000).ContinueWith(_ => { try { BootLog.Append("exit: hard exit after 10 s"); BootSentinel.Clear(); Environment.Exit(0); } catch { } });
+        CloseWindowOrExit();
     }
 
     private static void CloseWindowOrExit()
