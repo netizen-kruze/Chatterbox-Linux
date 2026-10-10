@@ -378,7 +378,7 @@ public class AppUpdaterTests : IDisposable
         Assert.Equal(AppUpdater.SwapScript, psi.ArgumentList[1]);
         Assert.DoesNotContain("Chatterbox", AppUpdater.SwapScript);       // no path is ever interpolated
         Assert.Equal(new[] { "/home/u/it's here/Chatterbox", "123", "1", "--after", "123" }, psi.ArgumentList.Skip(3));
-        Assert.Equal("/home/u/it's here", psi.WorkingDirectory);
+        Assert.Equal(Path.GetDirectoryName("/home/u/it's here/Chatterbox"), psi.WorkingDirectory);   // the binary's own folder, spelled the host's way
         Assert.Equal("0", AppUpdater.SwapHelper("/x/Chatterbox", 1, relaunch: false, Array.Empty<string>()).ArgumentList[5]);
     }
 
